@@ -1,9 +1,9 @@
 <?php
 /*
 Plugin Name: FAPI Locker
-Plugin URI: http://www.fapi.cz
+Plugin URI: http://knowledge.firma20.cz/knowledgebase/fapi-fapi-locker/
 Description: Zamykání článků s ověřením platby přes FAPI.
-Version: 1.1
+Version: 1.2
 Author: Effecto + Jakub Koňas <jakub.konas@gmail.com>
 Author URI: http://www.fapi.cz
 License: 
@@ -13,6 +13,14 @@ License:
 
 CHANGE LOG
 ----------
+1.2
+    - Detailnejsi chybove zpravy: komunikace s FAPI, chybna konfigurace uzivatelem
+    - Vyhledani textu na fakture je nove nezavisle na velikosti pismen
+    - Opravena chyba v iteraci dokladu.
+    - Pridana kontrola, zda doklad byl skutecne uhrazen.
+    - Kontrola emailu nezavisle na velikosti pismen.
+    - @AllowedEmail je mozne psat jednotlive po radcich, oddelovat je carkou, strednikem
+
 1.1
     - Opravy ve validacnich rutinach.
     - Zprava o nepristupnem obsahu nove ve formatu (chybova zprava z validace)+@lockerNotBought+(email validacni FORM)+(nakupni FAPI FORM).
@@ -22,6 +30,30 @@ CHANGE LOG
     - Pri chybe validace je posledni zadany email vlozen do INPUTu pro email (oprava preklepu ap.).
     - Hook pro skryvani prispevku je zarazen na konec fronty hooku. Napr. pri pouziti vizualniho editoru MioWebu (a jinych)
       tyto pregenerovali zpravu o zamceni.
+
+
+CHYBOVE ZPRAVY
+--------------
+"Tento obsah prozatím nemáte zakoupený! (kód 100)"
+    - Neurcita chyba. Pouzije se jako vychozi text, pokud selze overeni emailu a nepodarilo se zjistit presnou pricinu.
+"V nastavení FAPI LOCKER chybí název položky faktury (kód 101)."
+    - V konfiguraci lockeru u prispevku chybi text, ktery se ma vyhledat v polozce faktury.
+"V nastavení FAPI LOCKER chybí jméno uživatele (kód 102)."
+    - Chyba v konfiguraci. Neni zadany login do FAPI (Settings->Locker).
+"V nastavení FAPI LOCKER chybí heslo (kód 103)."
+    - Chyba v konfiguraci. Neni zadane heslo do FAPI (Settings->Locker).
+
+"Ke službě FAPI se nelze připojit (kód 001). \n" . $e->getMessage()
+    - Chyba komunikace s FAPI. Nedostupnost, chybne prihlasovaci udaje. V detailu pripojena konkretni zprava z FAPI.
+"Služba FAPI není dostupná (kód 002). \nHTTP status code = ". $fapi->getCode()
+    - HTTP pozadave na FAPI vratil jiny status kod nez 200. Patrne chyba v API ci zmena v API nekompatibilni s lockerem
+"Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme žádnou platbu (kód 003 - neznámý email). Je emailová adresa správná?"
+    - Pro email neni ve FAPI registrovany zadny klient. Tj. pro email neexistuje ani objednavka.
+"Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme žádnou objednávku (kód 004 - žádné doklady). Je emailová adresa správná?"
+    - Email je FAPI nalezen, ale neexistuje pro nej zadna faktura/doklad.
+"Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme platbu pro tento chráněný obsah (kód 005)."
+    - Pro email existují doklady, ale žádný uhrazený neobsahuje požadovaný text v položce faktury.
+
 
 
 JAK TO FUNGUJE
@@ -204,7 +236,7 @@ function lockerMetaOutput()
         } ?>>
 
             <label for="not_bought">Text v případě nezakoupení článku</label>
-            <?php the_editor(stripslashes($values["lockerNotBought"][0]), 'not_bought'); ?>
+            <?php wp_editor(stripslashes($values["lockerNotBought"][0]), 'not_bought'); ?>
 
             <div class="clear"></div>
 
@@ -293,42 +325,87 @@ function connectFapi($email, $invoice)
 {
     global $lockerErrorMessage;
 
+    //Oriznout prazdne kraje.
+    $invoice = trim($invoice);
+
+    //Validovat pozadavek
+    if (empty($invoice)) {
+        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí název položky faktury (kód 101).";
+        return false;
+    }
+
     $fapiSettings = get_option("lockerOptions");
-    $fapiUsername = $fapiSettings["username"];
-    $fapiPassword = $fapiSettings["password"];
+    $fapiUsername = trim($fapiSettings["username"]);
+    $fapiPassword = ($fapiSettings["password"]);
+
+    //Validovat nastaveni lockeru
+    if (empty($fapiUsername)) {
+        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí jméno uživatele (kód 102).";
+        return false;
+    }
+    if (empty($fapiPassword)) {
+        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí heslo (kód 103).";
+        return false;
+    }
+
+    //Vykonny kod
 
     require_once("FAPIClient.php");
 
     $fapi = new FAPIClient($fapiUsername, $fapiPassword, 'http://api.fapi.cz');
-    $client = $fapi->client->search(array('email' => $email));
-    if ($fapi->getCode() != 200) {
-        $lockerErrorMessage = "Služba s evidencí plateb není dostupná.";
+    try {
+        $client = $fapi->client->search(array('email' => $email));
+    } catch (Exception $e) {
+        $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \n" . $e->getMessage();
         return false;
     }
-    if (!count($client["clients"])) {
-        $lockerErrorMessage = "E-mail \"".htmlspecialchars($email)."\" není registrován u platby tohoto obsahu.";
+    if ($fapi->getCode() != 200) {
+        $lockerErrorMessage = "Služba FAPI není dostupná (kód 002). \nHTTP status code = ". $fapi->getCode();
+        return false;
+    }
+    if (count($client["clients"]) == 0) {
+        $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme žádnou platbu (kód 003 - neznámý email). Je emailová adresa správná?";
         return false;
     }
     $client = $client["clients"][0];
 
     $invoices = $fapi->invoice->search(array('client' => $client['id']));
-    if (!$invoices)
+    if (!$invoices || (count($invoices) == 0))
     {
-        $lockerErrorMessage = "E-mail \"".htmlspecialchars($email)."\" není registrován u žádné platby tohoto obsahu.";
+        $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme žádnou objednávku (kód 004 - žádné doklady). Je emailová adresa správná?";
         return false;
     }
 
     foreach ($invoices["invoices"] as $inv) {
-        foreach ($inv["items"] as $item) {
-            if (strstr($item["name"], $invoice))
-                return true;
+        if ($inv["paid"]) {
+            foreach ($inv["items"] as $item) {
+                if (stristr($item["name"], $invoice))
+                    return true;
+            }
         }
     }
 
-    $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" není registrována žádná platba tohoto obsahu.";
+    //Faktury existuji, v zadne neni pozadovany text
+    $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme platbu pro tento chráněný obsah (kód 005).";
     return false;
 }
 
+
+/**
+ * Rozdeli string podle vicero oddelovacu.
+ *
+ * Priklad: $exploded = multiexplode(array(",",".","|",":"),$text);
+ *
+ * @param $delimiters array of string Pole oddelovacu
+ * @param $string string Rozdelovany text
+ * @return array Vrati pole rozdelenych textu.
+ */
+function multiexplode ($delimiters,$string) {
+
+    $ready = str_replace($delimiters, $delimiters[0], $string);
+    $launch = explode($delimiters[0], $ready);
+    return  $launch;
+}
 
 /**
  * Overi, zda $email opravneni k prispevku $postId.
@@ -348,8 +425,10 @@ function lockerCheckEmail($email, $postID)
     global $lockerErrorMessage;
 
     debug_fapi("lockerCheckEmail($email, $postID)...started");
-    $getMails = explode(",", get_post_meta($postID, "lockerAllowedEmails", TRUE));
-    //TODO KB Emaily validovat az po prevedeni na male znaky.
+    //Emaily validovat v lower case. Jako oddelovace akceptovat vice moznosti (carky, konce radek...)
+
+    $email = strtolower($email);
+    $getMails = multiexplode(array(",", ";", "\r\n", "\n"), strtolower(get_post_meta($postID, "lockerAllowedEmails", TRUE)));
     if (in_array($email, $getMails)) {
         debug_fapi("lockerCheckEmail($email, $postID) = allowed email");
         return true;
@@ -363,7 +442,7 @@ function lockerCheckEmail($email, $postID)
             return false;
         }
     }
-    debug_fapi("lockerCheckEmail($email, $postID) = FALSE unknown reason");
+    debug_fapi("lockerCheckEmail($email, $postID) = FALSE unknown unpredicted reason");
     return false;
 }
 
@@ -480,7 +559,7 @@ if(isset($emailToValidate)) {
     } else {
         //Pokud neni napr. z validace platby dostupna konkretnejsi zprava, pouzij vychozi.
         if (!$lockerErrorMessage)
-            $lockerErrorMessage = "Tento obsah prozatím nemáte zakoupený!";
+            $lockerErrorMessage = "Tento obsah prozatím nemáte zakoupený! (kód 100)";
     }
 }
 
