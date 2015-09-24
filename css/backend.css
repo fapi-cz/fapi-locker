@@ -1,0 +1,14 @@
+#lockerMeta label{
+	width: 100%;
+	margin: 10px 0px;
+	font-weight: bold;
+	clear: both;
+	display: block;
+}
+#lockerMeta textarea{
+    width: 60%;
+    height: 100px;
+}
+#activeLocker{
+    display: none;
+}
