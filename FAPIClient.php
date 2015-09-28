@@ -245,6 +245,7 @@ class FAPIClient {
 	public $client;
 	public $invoice;
 	public $item;
+	public $itemTemplate;
 	public $periodicInvoice;
 	public $currency;
 	public $paymentType;
@@ -255,10 +256,11 @@ class FAPIClient {
 	public $user;
 	public $payment;
 	public $validator;
+	public $form;
 	private $code;
 	public $RESTClient;
 
-	public function __construct($username, $password, $url = 'http://fapi.cz') {
+	public function __construct($username, $password, $url = 'http://api.fapi.cz') {
 		$this->RESTClient = new FAPIClient_PestJSON($url);
 		$this->RESTClient->setupAuth($username, $password);
 		$resources = array('client', 'invoice', 'item', 'periodicInvoice', 'currency', 'paymentType', 'country', 'settings', 'email', 'log', 'user');
@@ -268,6 +270,7 @@ class FAPIClient {
 		} $this->client = new FAPIClient_ClientResource($this->RESTClient, $this);
 		$this->invoice = new FAPIClient_InvoiceResource($this->RESTClient, $this);
 		$this->item = new FAPIClient_ItemResource($this->RESTClient, $this);
+		$this->itemTemplate = new FAPIClient_ItemTemplateResource($this->RESTClient, $this);
 		$this->periodicInvoice = new FAPIClient_PeriodicInvoiceResource($this->RESTClient, $this);
 		$this->currency = new FAPIClient_CurrencyResource($this->RESTClient, $this);
 		$this->paymentType = new FAPIClient_PaymentTypeResource($this->RESTClient, $this);
@@ -278,6 +281,7 @@ class FAPIClient {
 		$this->user = new FAPIClient_UserResource($this->RESTClient, $this);
 		$this->payment = new FAPIClient_PaymentResource($this->RESTClient, $this);
 		$this->validator = new FAPIClient_ValidatorResource($this->RESTClient, $this);
+		$this->form = new FAPIClient_FormResource($this->RESTClient, $this);
 	}
 
 	public function checkConnection() {
@@ -295,7 +299,7 @@ class FAPIClient {
 	public function processException(FAPIClient_Pest_Exception $exception) {
 		$json = json_decode($exception->getMessage());
 		$class = str_replace('Pest_', '', get_class($exception)) . 'Exception';
-		$exception = new $class(isset($json->message) ? $json->message : null);
+		$exception = new $class(isset($json->message) ? $json->message : null, 0, $exception);
 		throw $exception;
 	}
 
@@ -455,18 +459,24 @@ class FAPIClient_InvoiceResource extends FAPIClient_Resource {
 	 * @param integer
 	 * @param string
 	 * @param string
+	 * @param string|array|null
 	 * @param string
 	 * @param string
 	 * @param string
-	 * @param string
+	 * @param int|null
+	 * @param bool|null
+	 * @param string|array|null
+	 * @param string|array|null
+	 * @param string|null
+	 * @param string|null
 	 * @return array
 	 */
-	public function getAll($limit = null, $offset = null, $order = null, $searchKeyword = null, $user = null, $type = null, $status = null, $createDate = null, $dateFrom = null, $dateTo = null, $lastModifiedAfter = null)
+	public function getAll($limit = null, $offset = null, $order = null, $searchKeyword = null, $user = null, $type = null, $status = null, $createDate = null, $dateFrom = null, $dateTo = null, $lastModifiedAfter = null, $project = null, $afterPayday = null, $paydayDate = null, $paidOn = null, $series = null, $itemNameOrDescription = null)
 	{
 		try {
 			$url = $this->url;
 
-			if (isset($limit) || isset($offset) || isset($order) || isset($searchKeyword) || isset($user) || isset($type) || isset($status) || isset($createDate) || isset($dateFrom) || isset($dateTo) || isset($lastModifiedAfter)) {
+			if (isset($limit) || isset($offset) || isset($order) || isset($searchKeyword) || isset($user) || isset($type) || isset($status) || isset($createDate) || isset($dateFrom) || isset($dateTo) || isset($lastModifiedAfter) || isset($project) || isset($afterPayday) || isset($paydayDate) || isset($paidOn) || isset($series) || isset($itemNameOrDescription)) {
 				$parameters = array(
 					'limit' => $limit,
 					'offset' => $offset,
@@ -479,6 +489,12 @@ class FAPIClient_InvoiceResource extends FAPIClient_Resource {
 					'date_from' => $dateFrom,
 					'date_to' => $dateTo,
 					'last_modified_after' => $lastModifiedAfter,
+					'project' => $project,
+					'after_payday' => $afterPayday,
+					'payday_date' => $paydayDate,
+					'paid_on' => $paidOn,
+					'series' => $series,
+					'item_name_or_description' => $itemNameOrDescription,
 				);
 
 				$url .= sprintf('?%s', http_build_query($parameters));
@@ -488,6 +504,49 @@ class FAPIClient_InvoiceResource extends FAPIClient_Resource {
 			$this->setCode();
 
 			return $response['invoices'];
+		} catch (FAPIClient_Pest_Exception $exception) {
+			$this->parent->processException($exception);
+		}
+	}
+
+	/**
+	 * @param string
+	 * @param integer
+	 * @param string
+	 * @param string
+	 * @param string
+	 * @param string
+	 * @param string
+	 * @param int|null
+	 * @param bool|null
+	 * @param int|null
+	 * @return integer
+	 */
+	public function count($searchKeyword = null, $user = null, $type = null, $status = null, $createDate = null, $dateFrom = null, $dateTo = null, $project = null, $afterPayday = null, $form = null)
+	{
+		try {
+			$url = sprintf('%s/count', $this->url);
+
+			if (isset($searchKeyword) || isset($user) || isset($type) || isset($status) || isset($createDate) || isset($dateFrom) || isset($dateTo) || isset($project) || isset($afterPayday) || isset($form)) {
+				$parameters = array(
+					'search' => $searchKeyword,
+					'user' => $user,
+					'type' => $type,
+					'status' => $status,
+					'create_date' => $createDate,
+					'date_from' => $dateFrom,
+					'date_to' => $dateTo,
+					'project' => $project,
+					'after_payday' => $afterPayday,
+					'form' => $form,
+				);
+
+				$url .= sprintf('?%s', http_build_query($parameters));
+			}
+
+			$response = $this->client->get($url);
+			$this->setCode();
+			return $response['count'];
 		} catch (FAPIClient_Pest_Exception $exception) {
 			$this->parent->processException($exception);
 		}
@@ -506,6 +565,12 @@ class FAPIClient_ItemResource extends FAPIClient_Resource {
 	public function search($conditions) {
 		throw new FAPIClient_InvalidActionException;
 	}
+
+}
+
+class FAPIClient_ItemTemplateResource extends FAPIClient_Resource {
+
+	protected $url = '/item-templates';
 
 }
 
@@ -903,4 +968,8 @@ class FAPIClient_ValidatorResource extends FAPIClient_Resource {
 		}
 	}
 
+}
+
+class FAPIClient_FormResource extends FAPIClient_Resource {
+	protected $url = '/forms';
 }

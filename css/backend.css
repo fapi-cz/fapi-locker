@@ -12,3 +12,12 @@
 #activeLocker{
     display: none;
 }
+.removeInvoice{
+	text-decoration: none;
+	color: #ff0000;
+	font-weight: bold;
+}
+#addInvoice{
+	margin-top: 8px;
+	float: left;
+}

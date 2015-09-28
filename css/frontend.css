@@ -2,7 +2,79 @@
 	display: none;
 }
 
+#lockerForm div, #lockerForm form{
+	max-width: 100%;
+}
+
 #lockerCheckMail{
 	display: none;
 	margin: 15px 0px;
+}
+
+
+#lockerBox{
+	width: 100%;
+	text-align: center;
+	position: relative;
+	background-color: #f4f4f4;
+	margin: 15px 0px;
+	 -moz-box-shadow:    inset 0 0 10px #d2d2d2;
+   -webkit-box-shadow: inset 0 0 10px #d2d2d2;
+   box-shadow:         inset 0 0 10px #d2d2d2;
+}
+
+#lockerBoxInner{
+	padding: 20px;
+}
+
+#lockerBox.border{
+	border: 2px dashed #0059c6;	
+}
+
+#lockerBox #lockerBuyButton,#lockerCheckMail input[type=submit]{
+	padding: 4px 25px;
+	text-align: center;
+	color: #fff;
+	background-color: #0059c6;
+	border: 0px;
+	cursor: pointer;
+	font-size: 14px;
+	position: relative;
+	top: -1px;
+}
+
+
+#lockerBox #lockerBuyButton:hover{
+	text-decoration: underline;
+}
+
+#lockerBox a#fapiLocker{
+	position: absolute;
+	right: 7px;
+	bottom: 7px;
+	color: #C0C0C0;
+	font-size: 12px;
+}
+
+#lockerBox #lockerCheckMailButton{
+	text-decoration: underline;
+}
+
+#lockerBox #lockerCheckMailButton:hover{
+	text-decoration: none;
+}
+
+.lockerError{
+	background-color: #fde9ea;
+	color: #a02f29;
+	text-align: center;
+	border: 1px solid #dcc6c8;
+	width: 100%;
+	padding: 10px 0px;
+	font-weight: bold;
+	-webkit-border-radius: 3px;
+-moz-border-radius: 3px;
+border-radius: 3px;
+font-size: 13px;
+margin-top: 15px;
 }
