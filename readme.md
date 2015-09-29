@@ -11,6 +11,9 @@ Oficialni posledni release a dokumentace jsou dostupne na https://fapi.cz/fapi-l
 
 # Changelog
 
+### 2.3
+- Opraven bug #1 *"Plugin nefunguje při některých typech permalinků"*. Funkce pro získání permalinku přepracována a odladěna pro všechny standardní typy permalinků v Wordpressu verze 4.3.1.
+
 ### 2.2
 - Plugin je plne funkcni oproti FAPI z 2015-09-28. Opraveny zname bugy tykajici se nefunkcnosti pluginu na nekterych webech. Celkove odladeni, refactoring.
 - Doplneny kontroly chybnych uzivatelskych vstupu a chyb pri komunikaci s FAPI (chybejici prihlasovaci udaje, neplatne prihlasovaci udaje, nedostupnost FAPI, neocekavane odpovedi FAPI).

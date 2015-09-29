@@ -3,7 +3,7 @@
 Plugin Name: FAPI Locker
 Plugin URI: https://fapi.cz/fapi-locker
 Description: Zamykání článků a stránek s ověřováním uhrazené platby přes FAPI s možností přímého nákupu.
-Version: 2.2
+Version: 2.3
 Author: Firma 2.0 - FAPI
 Author URI: http://www.fapi.cz
 License:
@@ -17,6 +17,12 @@ define("LKR_OPTION_GROUP", "lockerOptions");
 /** Globalni promenna obsahujici chybovou zpravu, pokud neco selhalo. Zprava je jako prosty text urceny pro vypis uzivateli.
  * @global @var string $lockerErrorMessage  */
 $lockerErrorMessage = "";
+/**
+ * @global @var bool $lockerFapiCredentialsValidated Je-li nastavena, pak obsahuje vysledek validace prihlaseni k FAPI.
+ * Jedne se v podstate o cachovani vysledku, pokud je potreba validaci provest vicekrat v jedne iteraci, napr. pri vysledku
+ * vyhledavani.
+ */
+unset($lockerFapiCredentialsValidated);
 
 /**
  * Debugovaci zprava prefixovana "FAPI locker" pro snazsi ladeni. Vhodne pri logovani pres WP do souboru.
@@ -377,14 +383,20 @@ add_action('wp_enqueue_scripts', 'hook_registerFrontendScripts');
 function fapiCheckCredentials()
 {
     global $lockerErrorMessage;
+    global $lockerFapiCredentialsValidated;
 
     debug_fapi("fapiCheckCredentials()");
+    if (isset($lockerFapiCredentialsValidated)) {
+        debug_fapi("fapiCheckCredentials(): cached = " . $lockerFapiCredentialsValidated);
+        return $lockerFapiCredentialsValidated;
+    }
 
     $fapiSettings = get_option("lockerOptions");
     if (($fapiSettings["username"] == "") OR ($fapiSettings["password"] == "")) {
         $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \nChybí přihlašovací údaje do FAPI.";
         debug_fapi("fapiCheckCredentials() = error no credential > ");
-        return false;
+        $lockerFapiCredentialsValidated = false;
+        return $lockerFapiCredentialsValidated;
     } else {
         require_once(plugin_dir_path(__FILE__) . "FAPIClient.php");
         try {
@@ -393,18 +405,22 @@ function fapiCheckCredentials()
             if ($fapi->getCode() != 200) {
                 $lockerErrorMessage = "Služba FAPI není dostupná (kód 002). \nHTTP status code = ". $fapi->getCode();
                 debug_fapi("fapiCheckCredentials() = error connection > HTTP status code = ". $fapi->getCode());
-                return false;
+                $lockerFapiCredentialsValidated = false;
+                return $lockerFapiCredentialsValidated;
             }
             debug_fapi("fapiCheckCredentials() = OK");
-            return true;
+            $lockerFapiCredentialsValidated = true;
+            return $lockerFapiCredentialsValidated;
         } catch (FAPIClient_UnauthorizedException $e) {
             $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \nNeplatné přihlašovací údaje do FAPI.";
             debug_fapi("fapiCheckCredentials() = error unauthorized > " . $e->getMessage());
-            return false;
+            $lockerFapiCredentialsValidated = false;
+            return $lockerFapiCredentialsValidated;
         } catch (Exception $e) {
             $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \n" . $e->getMessage();
             debug_fapi("fapiCheckCredentials() = error general > " . $e->getMessage());
-            return false;
+            $lockerFapiCredentialsValidated = false;
+            return $lockerFapiCredentialsValidated;
         }
     }
 }
@@ -419,6 +435,8 @@ function fapiCheckCredentials()
 function fapiCheckInvoice($email, $invoice)
 {
     global $lockerErrorMessage;
+
+    debug_fapi("fapiCheckInvoice()");
 
     //Validovat pozadavek  //TODO test na prazdny seznam
     if (empty($invoice)) {
@@ -563,9 +581,19 @@ function getCurrentPageURL()
  */
 function getCurrentPostId()
 {
+    global $wp_rewrite, $wp;
 
-    if (isset($_GET["p"])) {
-        return intval($_GET["p"]);
+    //Inicializace globalu, ktere vyuziva funkce url_to_postid. Kez by byla jejich potreba nekde popsana! ;)
+    if (!$wp_rewrite)
+        $wp_rewrite = new WP_Rewrite();
+    if (!$wp)
+        $wp = new WP();
+
+    //Preloz URL na PostId. Vyuzije se k tomu jak wp_rewrite, tak nastaveni permalinku a pak i par zajimavych chytristik.
+    $result = url_to_postid($_SERVER["REQUEST_URI"]);
+    if (isset($result) and $result) {
+        debug_fapi("currentPostId (real) = ". $result);
+        return $result;
     }
 
     global $wpdb;
@@ -586,6 +614,7 @@ function getCurrentPostId()
         post_name = \"$slug\"
    ";
 
+    debug_fapi("currentPostId (probably) = ". $result);
     return $wpdb->get_var($sql);
 }
 
@@ -794,7 +823,7 @@ function postLocker($content)
         return $lockerContent;
 
     }
-    debug_fapi("postLocker($content) = locker INACTIVE");
+    debug_fapi("postLocker(ORIGINAL_CONTENT) = locker INACTIVE");
     return $content;
 }
 add_filter('the_content', 'postLocker', 100);
