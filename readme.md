@@ -11,6 +11,9 @@ Oficialni posledni release a dokumentace jsou dostupne na https://fapi.cz/fapi-l
 
 # Changelog
 
+### 2.4
+- Vyřešen problém s příspěvky/stránkami, které obsahuji uvozovky v názvu (#2). Nově se klíč odvozuje od surového názvu článku, na který ještě nejsou použity filtry (např. záměna uvozovek, nedělitelných mezer ap.).
+
 ### 2.3
 - Opraven bug #1 *"Plugin nefunguje při některých typech permalinků"*. Funkce pro získání permalinku přepracována a odladěna pro všechny standardní typy permalinků v Wordpressu verze 4.3.1.
 

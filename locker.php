@@ -3,7 +3,7 @@
 Plugin Name: FAPI Locker
 Plugin URI: https://fapi.cz/fapi-locker
 Description: Zamykání článků a stránek s ověřováním uhrazené platby přes FAPI s možností přímého nákupu.
-Version: 2.3
+Version: 2.4
 Author: Firma 2.0 - FAPI
 Author URI: http://www.fapi.cz
 License:
@@ -32,6 +32,23 @@ function debug_fapi($message)
 {
     if (isset($message) and ($message))
         error_log("FAPI locker -- " . $message);
+}
+
+/**
+ * Vygeneruje pristupovy klic pro prispevek nebo stranku, ktera je identifikovana svym ciselnym ID. Hodnota klice je
+ * odvozena z ID prispevku a suroveho nazvu prispevku.
+ *
+ * @param $postId int ID prispevku ci stranky, pro ktery ma byt spocitan klic.
+ * @return string Spocitany klic pro prispevek
+ */
+function countLockerKey($postId) {
+    $post = get_post( $postId );
+    $title = isset( $post->post_title ) ? $post->post_title : '';
+    $base = get_bloginfo("url") . $postId . $title;
+    debug_fapi("lockerKey BASE > " . $base);
+    $key = md5($base);
+    debug_fapi("lockerKey REAL = " . $key);
+    return $key;
 }
 
 
@@ -625,12 +642,15 @@ function getCurrentPostId()
  */
 function lockerCheckCookieOrUser($postID)
 {
-    if (isset($_COOKIE["postLocker"]) && isset($_COOKIE["postLocker"][$postID])
-        && $_COOKIE["postLocker"][$postID] == md5(get_bloginfo("url") . $postID . get_the_title($postID))
-    ) {
-        //TODO verze 2.1 jeste validovala $_COOKIE["postLockerM"][$postID], coz zrychli zneplatneni cookie v pripade chybne autorizace (=pokud o neopravneny pristup), na druhe strane tim ukaze email overeneho uzivatele.
-        debug_fapi("lockerCheckCookieOrUser($postID) = cookie OK");
-        return true;
+    if (isset($_COOKIE["postLocker"]) && isset($_COOKIE["postLocker"][$postID])) {
+        $gotkey = $_COOKIE["postLocker"][$postID];
+        $mykey = countLockerKey($postID);
+        debug_fapi("lockerKey COOK = " . $gotkey);
+        if ($mykey == $gotkey) {
+            //TODO verze 2.1 jeste validovala $_COOKIE["postLockerM"][$postID], coz zrychli zneplatneni cookie v pripade chybne autorizace (=pokud o neopravneny pristup), na druhe strane tim ukaze email overeneho uzivatele.
+            debug_fapi("lockerCheckCookieOrUser($postID) = cookie OK");
+            return true;
+        }
     } elseif (is_user_logged_in()) {
         global $current_user;
         get_currentuserinfo();
@@ -645,24 +665,24 @@ function lockerCheckCookieOrUser($postID)
     debug_fapi("lockerCheckCookieOrUser($postID) = FALSE");
     return false;
 
+    /*{
+        if ((isset($_COOKIE["postLocker"][$postID]) && ($_COOKIE["postLocker"][$postID] == md5(get_bloginfo("url") . $postID . get_the_title($postID))))) {
+            if ((isset($_COOKIE["postLockerM"][$postID]) && (lockerCheckEmail($_COOKIE["postLockerM"][$postID], $postID)))) {
+                return true;
+            }
+        } elseif (is_user_logged_in()) {
+            global $current_user;
+            get_currentuserinfo();
+
+            if (lockerCheckEmail($current_user->user_email, $postID)) {
+                return true;
+            }
+        }
+
+        return false;
+
+    }*/
 }
-/*{
-    if ((isset($_COOKIE["postLocker"][$postID]) && ($_COOKIE["postLocker"][$postID] == md5(get_bloginfo("url") . $postID . get_the_title($postID))))) {
-        if ((isset($_COOKIE["postLockerM"][$postID]) && (lockerCheckEmail($_COOKIE["postLockerM"][$postID], $postID)))) {
-            return true;
-        }
-    } elseif (is_user_logged_in()) {
-        global $current_user;
-        get_currentuserinfo();
-
-        if (lockerCheckEmail($current_user->user_email, $postID)) {
-            return true;
-        }
-    }
-
-    return false;
-
-}*/
 
 /**
  * Vrati URL na prispevek/stranku dle ID prispevku
@@ -679,6 +699,7 @@ function getPostURL($postId) {
         $result = get_site_url($postId);
     return $result;
 }
+
 
 // Zde se obsluhuje pozadavek na odemknuti obsahu dle emailove adresy.
 // Pres POST prichazi bud jako "lockerMail", ktery vyplnil uzivatel ve zde vygenerovanem
@@ -705,8 +726,8 @@ if(isset($emailToValidate) && !empty($emailToValidate)) {
     if (lockerCheckEmail(addslashes($_POST["lockerMail"]), $postID)) {
         // Pristup povolen. Uloz cookie a refreshni stranku.
         //TODO Nebo rovnou generuj povoleny obsah pro usetreni jednoho kolecka? Otazkou je, jak pak dostat cookie do prohlizece klienta - musel by se nejakym separe async callem.
-        $lockerHash = md5(get_bloginfo("url") . $postID . get_the_title($postID));
-        debug_fapi("setting cookie 'postLocker[$postID]'");
+        $lockerHash = countLockerKey($postID);
+        debug_fapi("setting cookie 'postLocker[$postID]' = " . $lockerHash);
         setcookie("postLocker[" . $postID . "]", $lockerHash, time() + 60 * 60 * 24 * 90, "/");
 //        setcookie("postLockerM[" . $postID . "]", $_POST["lockerMail"], time() + 60 * 60 * 24 * 90, "/"); //TODO toto je z 2.1 a je to bezpecnostni dira
         //adresa pro presmerovani
