@@ -1,871 +1,1064 @@
 <?php
+declare(strict_types=1);
+
 /*
-Plugin Name: FAPI Locker
-Plugin URI: https://fapi.cz/fapi-locker
-Description: Zamykání článků a stránek s ověřováním uhrazené platby přes FAPI s možností přímého nákupu.
-Version: 2.4
-Author: Firma 2.0 - FAPI
-Author URI: http://www.fapi.cz
-License:
+ * Plugin Name: FAPI Locker
+ * Plugin URI: https://fapi.cz/fapi-locker
+ * Description: Zamykání stránek a článků s možností zakoupení přístupu přes prodejní aplikaci FAPI.
+ * Version: 3.0
+ * Author: FAPI Business s.r.o.
+ * Author URI: https://www.fapi.cz
+ * Text Domain: fapi-locker
+ * License:
 */
 
-
-/** Slug-name stranky nastaveni pro locker. */
-define("LKR_SETTINGS_SLUG", "locker");
-/** Nazev skupiny nastaveni lockeru. */
-define("LKR_OPTION_GROUP", "lockerOptions");
-/** Globalni promenna obsahujici chybovou zpravu, pokud neco selhalo. Zprava je jako prosty text urceny pro vypis uzivateli.
- * @global @var string $lockerErrorMessage  */
-$lockerErrorMessage = "";
-/**
- * @global @var bool $lockerFapiCredentialsValidated Je-li nastavena, pak obsahuje vysledek validace prihlaseni k FAPI.
- * Jedne se v podstate o cachovani vysledku, pokud je potreba validaci provest vicekrat v jedne iteraci, napr. pri vysledku
- * vyhledavani.
- */
-unset($lockerFapiCredentialsValidated);
-
-/**
- * Debugovaci zprava prefixovana "FAPI locker" pro snazsi ladeni. Vhodne pri logovani pres WP do souboru.
- * @param $message string Zprava, ktera se ma zalogovat
- */
-function debug_fapi($message)
-{
-    if (isset($message) and ($message))
-        error_log("FAPI locker -- " . $message);
+if (!defined('ABSPATH')) {
+    exit;
 }
 
-/**
- * Vygeneruje pristupovy klic pro prispevek nebo stranku, ktera je identifikovana svym ciselnym ID. Hodnota klice je
- * odvozena z ID prispevku a suroveho nazvu prispevku.
- *
- * @param $postId int ID prispevku ci stranky, pro ktery ma byt spocitan klic.
- * @return string Spocitany klic pro prispevek
- */
-function countLockerKey($postId) {
-    $post = get_post( $postId );
-    $title = isset( $post->post_title ) ? $post->post_title : '';
-    $base = get_bloginfo("url") . $postId . $title;
-    debug_fapi("lockerKey BASE > " . $base);
-    $key = md5($base);
-    debug_fapi("lockerKey REAL = " . $key);
-    return $key;
-}
-
-
-/*
- * Hook pro pripojeni do administracniho menu --> Settings/Locker
- */
-function hook_registerLockerMenu()
+class FAPI_Locker
 {
-    add_options_page('Nastavení FAPI lockeru', 'FAPI Locker', 'manage_options', 'options.php', 'genLckrOptions');
-}
-add_action('admin_menu', 'hook_registerLockerMenu');
-
-/*
- * Registrace pro nastaveni pluginu
- */
-function hook_registerPluginSettings()
-{
-    register_setting(LKR_OPTION_GROUP, 'lockerOptions');
-
-    //Locker main section
-    add_settings_section('lockerMain', 'Nastavení údajů', 'lockerOptionsSection', LKR_SETTINGS_SLUG);
-    add_settings_field('lockerSettingsUsername', 'Přihlašovací jméno', 'genLckrStgs_Username', LKR_SETTINGS_SLUG, 'lockerMain');
-    add_settings_field('lockerSettingsPassword', 'Heslo', 'genLckrStgs_Password', LKR_SETTINGS_SLUG, 'lockerMain');
-
-    //Locker theme section
-    add_settings_section('lockerTheme', 'Nastavení vzhledu', 'lockerOptionsSection', LKR_SETTINGS_SLUG);
-    add_settings_field('lockerSettingsBorder', 'Ohraničení formuláře', 'genLckrStgs_Border', LKR_SETTINGS_SLUG, 'lockerTheme');
-    add_settings_field('lockerSettingsButtonBackground', 'Barva pozadí tlačítka', 'genLckrStgs_ButtonBackground', LKR_SETTINGS_SLUG, 'lockerTheme');
-    add_settings_field('lockerSettingsButtonColor', 'Barva písma tlačítka', 'genLckrStgs_ButtonColor', LKR_SETTINGS_SLUG, 'lockerTheme');
-}
-add_action('admin_init', 'hook_registerPluginSettings');
-
-
-/*
- * Hook pro deaktivaci pluginu
- */
-function hook_lockerPluginDeactivate()
-{
-    //
-}
-register_deactivation_hook(__FILE__, 'hook_lockerPluginDeactivate');
-
-/*
- * Hook pro odinstalaci pluginu
- */
-function hook_lockerPluginUninstall()
-{
-    if (!defined('WP_UNINSTALL_PLUGIN'))
-        exit ();
-
-    delete_option('lockerOptions');
-    delete_post_meta_by_key('lockerActive');
-    delete_post_meta_by_key('lockerNotBought');
-    delete_post_meta_by_key('lockerButton');
-    delete_post_meta_by_key('lockerInvoice');
-    delete_post_meta_by_key('lockerForm');
-    delete_post_meta_by_key('lockerAllowedEmails');
-}
-register_uninstall_hook(__FILE__, 'hook_lockerPluginUninstall');
-
-function lockerOptionsSection()
-{
-    // section title
-}
-
-function genLckrStgs_Username()
-{
-    $options = get_option('lockerOptions');
-    echo "<input id='lockerSettingsUsername' name='lockerOptions[username]' size='40' type='text' value='"
-        . (isset($options["username"]) ? $options["username"] : "")
-        . "' />";
-}
-
-function genLckrStgs_Password()
-{
-    $options = get_option('lockerOptions');
-    echo "<input id='lockerSettingsPassword' name='lockerOptions[password]' size='40' type='password' value='"
-        . (isset($options["password"]) ? $options["password"] : "")
-        . "' />";
-}
-
-
-function genLckrStgs_Border()
-{
-    $options = get_option('lockerOptions');
-    echo "<select name=\"lockerOptions[border]\">
-        <option value=\"0\">Bez ohraničení</option>
-        <option value=\"1\" "
-            . (isset($options["border"]) && $options["border"] == 1 ? "selected" : "")
-            . ">S ohraničením</option>
-        </select>";
-}
-
-
-function genLckrStgs_ButtonBackground()
-{
-    $options = get_option('lockerOptions');
-    echo "<input id='lockerOptionsButtonBackground' name='lockerOptions[buttonBackground]' size='40' type='text' value='"
-        . (isset($options["buttonBackground"]) ? $options["buttonBackground"] : "")
-        . "' />";
-}
-
-function genLckrStgs_ButtonColor()
-{
-    $options = get_option('lockerOptions');
-    echo "<input id='lockerOptionsButtonColor' name='lockerOptions[buttonColor]' size='40' type='text' value='"
-        . (isset($options["buttonColor"]) ? $options["buttonColor"] : "")
-        . "' />";
-}
-
-
-/**
- * Vygeneruje stranku globalniho nastaveni FAPI lockeru obsahujici nastaveni pripojeni na FAPI.
- */
-function genLckrOptions()
-{
-    echo "
-<div class=\"wrap\">
-	<h2>Locker: Nastavení FAPI údajů</h2>
-	<form method=\"post\" action=\"options.php\">";
-    if (!fapiCheckCredentials()) {
-//        add_settings_error('locker', '199', 'Nelze se pripojit...');
-        echo "<br /><strong style=\"font-size:15px;color:red;\">Nepodařilo se připojit k FAPI. Zkontrolujte prosím své přihlašovací údaje.</strong>";
-    }
-    settings_fields(LKR_OPTION_GROUP);
-    do_settings_sections('locker');
-    submit_button();
-    echo "
-	</form>
-</div>
-";
-}
-
-/**
- * Hook pro zaveseni skriptu lockeru.
- */
-function hook_registerAdminScripts()
-{
-    wp_register_script('lockerBackend', plugins_url('/js/backend.js', __FILE__), array('jquery'), '1.0', true);
-    wp_enqueue_script('lockerBackend');
-    wp_register_script('colorPicker', plugins_url('/libs/colorpicker/js/colpick.js', __FILE__), array('jquery'), '1.0', true);
-    wp_enqueue_script('colorPicker');
-    wp_register_style('colorPickerCSS', plugins_url('/libs/colorpicker/css/colpick.css', __FILE__), array(), '1.0');
-    wp_enqueue_style('colorPickerCSS');
-    wp_register_style('lockerBackendCSS', plugins_url('/css/backend.css', __FILE__), array(), '1.0');
-    wp_enqueue_style('lockerBackendCSS');
-}
-add_action('admin_enqueue_scripts', 'hook_registerAdminScripts');
-
-/**
- * Prida editacni metaboxy pro stranky a pro prispevky.
- */
-function lockerMetaBox()
-{
-    add_meta_box('lockerMeta', 'Locker', 'genLckrMetaBox', 'post', 'normal', 'high');
-    add_meta_box('lockerMeta', 'Locker', 'genLckrMetaBox', 'page', 'normal', 'high');
-
-}
-add_action('add_meta_boxes', 'lockerMetaBox');
-
-/**
- * Vygeneruje nastavovaci metabox lockeru pro stranku nebo prispevek
- */
-function genLckrMetaBox()
-{
-    global $post;
-    $values = get_post_custom($post->ID);
-
-    require_once(plugin_dir_path(__FILE__) . "FAPIClient.php");
-
-    // Zkontroluj, zda je funkcni FAPI pripojeni. Bez nej nema nastavnei smysl.
-    if (!fapiCheckCredentials()) {
-        echo "<br /><strong class=\"fapi_locker_error lockerError\"> Připojení na FAPI není funkční. Nejprve je potřeba nastavit spojení na FAPI.</strong>"
-            ."<br /><br />"
-            ." Správné přihlašovací údaje zadejte v <a href=\"" . admin_url() . "options-general.php?page=options.php\">nastavení FAPI lockeru</a>."
-        ;
-        return;
-    }
-
-
-    $fapiSettings = get_option("lockerOptions");
-    $fapi = new FAPIClient($fapiSettings["username"], $fapiSettings["password"]);
-
-    ?>
-
-    <div id="lockerMeta">
-        <?php
-        wp_nonce_field('lckr_metabox_nonce_action', 'lckr_metabox_n_name');
-        ?>
-
-        <label for="active">Stav lockeru</label>
-        <select id="active" name="active">
-            <option value="0">Neaktivní</option>
-            <option value="1" <?php if (isset($values["lockerActive"][0]) && $values["lockerActive"][0] == 1) {
-                echo "selected";
-            } ?>>Aktivní</option>
-        </select>
-
-        <div class="clear"></div>
-
-        <div id="activeLocker" <?php if (isset($values["lockerActive"][0]) && $values["lockerActive"][0] == 1) {
-            echo "style=\"display:block;\"";
-        } ?>>
-            <label for="not_bought">Text v případě nezakoupení článku</label>
-            <?php wp_editor('' . (!isset($values["lockerNotBought"][0]) ? "" : stripslashes($values["lockerNotBought"][0])) . '', 'not_bought'); ?>
-
-            <div class="clear"></div>
-
-            <label for="button">Text tlačítka pro zobrazení Prodejního formuláře</label>
-            <input id="button" name="button"
-                   value="<?php echo(!isset($values["lockerButton"][0]) ? "Zakoupit" : $values["lockerButton"][0]); ?>"/>
-
-            <div class="clear"></div>
-
-            <label for="invoice">Název položky na faktuře</label>
-            <?php
-            $itemTemplates = $fapi->itemTemplate->getAll();
-
-            if (isset($_GET["action"]) == "edit") {
-                $invoiceItems = unserialize($values["lockerInvoice"][0]);
-            }
-
-            echo "<select name=\"invoice[]\" id=\"invoice\">";
-            foreach ($itemTemplates as $item) {
-                if (isset($_GET["action"]) == "edit") {
-                    echo "<option " . ($invoiceItems[0] == $item["name"] ? "selected" : "") . ">" . $item["name"] . "</option>";
-                } else {
-                    echo "<option " . ($values["lockerInvoice"][0] == $item["name"] ? "selected" : "") . ">" . $item["name"] . "</option>";
-                }
-            }
-            echo "</select>";
-
-            ?>
-            <div id="invoiceSelects">
-                <?php
-                if (!empty($itemTemplates)) {
-
-                    if (isset($_GET["action"]) == "edit") {
-
-                        $n = 0;
-                        foreach (unserialize($values["lockerInvoice"][0]) as $invoiceItem) {
-                            $n++;
-
-                            if ($n == 1) {
-                                continue;
-                            }
-
-                            echo "<div><select name=\"invoice[]\">";
-                            foreach ($itemTemplates as $item) {
-                                echo "<option " . ($invoiceItem == $item["name"] ? "selected" : "") . ">" . $item["name"] . "</option>";
-                            }
-                            echo "</select>&nbsp;<a class=\"removeInvoice\" href=\"#\">X</a> <div class=\"clear\"></div></div>";
-
-                        }
-                    }
-
-                }
-
-                ?>
-
-            </div>
-            <a href="#" id="addInvoice">Přidat další položku</a>
-
-            <div class="clear"></div>
-
-            <label for="javascriptForm">Zvolte Prodejní formulář FAPI</label>
-            <select name="javascriptForm" id="javascriptForm">
-                <?php
-                $forms = $fapi->form->getAll();
-                if (!empty($forms)) {
-                    foreach ($forms as $form) {
-                        echo "<option value=\"" . $form["id"] . "\" " . ($values["lockerForm"][0] == $form["id"] ? "selected" : "") . ">" . $form["name"] . "</option>";
-                    }
-                }
-                ?>
-            </select>
-
-            <div class="clear"></div>
-
-            <label for="allowedEmails">Povolené e-maily</label>
-            <textarea name="allowedEmails" id="allowedEmails"><?php echo ""
-                    . (isset($values["lockerAllowedEmails"][0]) ? $values["lockerAllowedEmails"][0] : "");
-                ?></textarea><br/>
-            Při zadávání více emailů je oddělujte čárkou.
-
-            <div class="clear"></div>
-            <br/>
-            <a href="<?php echo get_admin_url(); ?>/options-general.php?page=options.php" target="_blank">Globální nastavení
-                barvy a ohraničení prodejního formuláře</a>
-            <br/>
-        </div>
-    </div>
-    <?php
-}
-
-/**
- * Ulozi nastaveni z metaboxu lockeru pro stranku nebo prispevek
- */
-function saveLckrMetabox($post_id)
-{
-    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-    if (!isset($_POST['lckr_metabox_n_name']) || !wp_verify_nonce($_POST['lckr_metabox_n_name'], 'lckr_metabox_nonce_action')) return;
-    $allowed = array(
-        'a' => array(
-            'href' => array()
-        )
-    );
-
-    if (isset($_POST['active']))
-        update_post_meta($post_id, 'lockerActive', wp_kses($_POST['active'], $allowed));
-    if (isset($_POST['not_bought']))
-        update_post_meta($post_id, 'lockerNotBought', addslashes($_POST['not_bought']));
-    if (isset($_POST['button']))
-        update_post_meta($post_id, 'lockerButton', wp_kses($_POST['button'], $allowed));
-    if (isset($_POST['invoice']))
-        update_post_meta($post_id, 'lockerInvoice', $_POST['invoice']);
-    if (isset($_POST['javascriptForm']))
-        update_post_meta($post_id, 'lockerForm', $_POST['javascriptForm']);
-    if (isset($_POST['allowedEmails']))
-        update_post_meta($post_id, 'lockerAllowedEmails', wp_kses($_POST['allowedEmails'], $allowed));
-}
-add_action('save_post', 'saveLckrMetabox');
-
-/**
- * Registrovat frontend skripty.
- */
-function hook_registerFrontendScripts()
-{
-    wp_enqueue_script("jquery");
-
-    wp_register_script('lockerFrontend', plugins_url('/js/frontend.js', __FILE__), array('jquery'), '1.0', true);
-    wp_enqueue_script('lockerFrontend');
-
-    wp_register_style('lockerFrontendCSS', plugins_url('/css/frontend.css', __FILE__), array(), '1.0');
-    wp_enqueue_style('lockerFrontendCSS');
-}
-add_action('wp_enqueue_scripts', 'hook_registerFrontendScripts');
-
-/**
- -------------------------------------------------------------------------------------------------------------
- */
-
-/**
- * Zkontroluje, zda jsou nastaveny prihlasovaci udaje a zda se lze s nimi uspesne spojit s FAPI.
- * Pri chybe naplni globalni promennou $lockerErrorMessage.
- *
- * @return bool Vrati true, pokud je spojeni funkci. Vrati false pri chybe a naplni $lockerErrorMessage.
- */
-function fapiCheckCredentials()
-{
-    global $lockerErrorMessage;
-    global $lockerFapiCredentialsValidated;
-
-    debug_fapi("fapiCheckCredentials()");
-    if (isset($lockerFapiCredentialsValidated)) {
-        debug_fapi("fapiCheckCredentials(): cached = " . $lockerFapiCredentialsValidated);
-        return $lockerFapiCredentialsValidated;
-    }
-
-    $fapiSettings = get_option("lockerOptions");
-    if (($fapiSettings["username"] == "") OR ($fapiSettings["password"] == "")) {
-        $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \nChybí přihlašovací údaje do FAPI.";
-        debug_fapi("fapiCheckCredentials() = error no credential > ");
-        $lockerFapiCredentialsValidated = false;
-        return $lockerFapiCredentialsValidated;
-    } else {
-        require_once(plugin_dir_path(__FILE__) . "FAPIClient.php");
-        try {
-            $fapi = new FAPIClient($fapiSettings["username"], $fapiSettings["password"]);
-            $fapi->checkConnection();
-            if ($fapi->getCode() != 200) {
-                $lockerErrorMessage = "Služba FAPI není dostupná (kód 002). \nHTTP status code = ". $fapi->getCode();
-                debug_fapi("fapiCheckCredentials() = error connection > HTTP status code = ". $fapi->getCode());
-                $lockerFapiCredentialsValidated = false;
-                return $lockerFapiCredentialsValidated;
-            }
-            debug_fapi("fapiCheckCredentials() = OK");
-            $lockerFapiCredentialsValidated = true;
-            return $lockerFapiCredentialsValidated;
-        } catch (FAPIClient_UnauthorizedException $e) {
-            $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \nNeplatné přihlašovací údaje do FAPI.";
-            debug_fapi("fapiCheckCredentials() = error unauthorized > " . $e->getMessage());
-            $lockerFapiCredentialsValidated = false;
-            return $lockerFapiCredentialsValidated;
-        } catch (Exception $e) {
-            $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \n" . $e->getMessage();
-            debug_fapi("fapiCheckCredentials() = error general > " . $e->getMessage());
-            $lockerFapiCredentialsValidated = false;
-            return $lockerFapiCredentialsValidated;
-        }
-    }
-}
-
-/**
- * Provede kontrolu ve FAPI, zda v nektere fakture klienta s danym $email existuje polozka s textem $invoice.
- *
- * @param string $email Emailova adresa klienta, jehoz faktury se maji prohledat.
- * @param array $invoice Texty polozek faktury. Texty jsou porovnavany na cely text, case-insensitive.
- * @return bool Pokud polozka existuje, vrati true. Pokud zadna vyhovujici nebyla nalezena, vrati false.
- */
-function fapiCheckInvoice($email, $invoice)
-{
-    global $lockerErrorMessage;
-
-    debug_fapi("fapiCheckInvoice()");
-
-    //Validovat pozadavek  //TODO test na prazdny seznam
-    if (empty($invoice)) {
-        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí název položky faktury (kód 101).";
-        return false;
-    }
-
-    $fapiSettings = get_option("lockerOptions");
-    $fapiUsername = trim($fapiSettings["username"]);
-    $fapiPassword = ($fapiSettings["password"]);
-
-    //Validovat nastaveni lockeru
-    if (empty($fapiUsername)) {
-        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí jméno uživatele pro komunikaci s FAPI (kód 102).";
-        return false;
-    }
-    if (empty($fapiPassword)) {
-        $lockerErrorMessage = "V nastavení FAPI LOCKER chybí heslo pro komunikaci s FAPI (kód 103).";
-        return false;
-    }
-
-    //Vykonny kod
-
-    require_once("FAPIClient.php");
-
-    $fapi = new FAPIClient($fapiUsername, $fapiPassword, 'http://api.fapi.cz');
-    try {
-        $client = $fapi->client->search(array('email' => $email));
-    } catch (Exception $e) {
-        $lockerErrorMessage = "Ke službě FAPI se nelze připojit (kód 001). \n" . $e->getMessage();
-        return false;
-    }
-    if ($fapi->getCode() != 200) {
-        $lockerErrorMessage = "Služba FAPI není dostupná (kód 002). \nHTTP status code = ". $fapi->getCode();
-        return false;
-    }
-    if (count($client["clients"]) == 0) {
-        $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" neevidujeme žádnou objednávku ani platbu (kód 003 - neznámý email). \nJe emailová adresa správná?";
-        return false;
-    }
-    $client = $client["clients"][0];
-
-    $invoices = $fapi->invoice->search(array('client' => $client['id']));
-    if (!$invoices || empty($invoice) || (count($invoices) == 0))
+    /** @var string */
+    const NAMESPACE = 'FAPILocker';
+
+    /** @var string */
+    const SETTINGS_SLUG = 'fapi-locker';
+
+    /** @var string */
+    const LANG_DOMAIN = 'fapi-locker';
+
+    /** @var string */
+    const OPTIONS_NAME = self::NAMESPACE . 'Options';
+
+    /** @var string */
+    const COOKIE_NAME = self::NAMESPACE . 'Post';
+
+    /** @var string */
+    const SETTINGS_GROUP = self::NAMESPACE . 'Options';
+
+    /** @var string */
+    const METABOX_NONCE_ACTION = self::NAMESPACE . 'NonceAction';
+
+    /** @var string */
+    const META_ACTIVE = self::NAMESPACE . 'Active';
+
+    /** @var string */
+    const META_NOT_BOUGHT = self::NAMESPACE . 'NotBought';
+
+    /** @var string */
+    const META_BUTTON = self::NAMESPACE . 'Button';
+
+    /** @var string */
+    const META_UNLOCK_BUTTON = self::NAMESPACE . 'UnlockButton';
+
+    /** @var string */
+    const META_SHOW_BUTTON = self::NAMESPACE . 'ShowOrderForm';
+
+    /** @var string */
+    const META_INVOICE = self::NAMESPACE . 'Invoice';
+
+    /** @var string */
+    const META_FORM = self::NAMESPACE . 'Form';
+
+    /** @var string */
+    const META_ALLOWED_EMAILS = self::NAMESPACE . 'AllowedEmails';
+
+    /** @var bool */
+    private static $inited = false;
+
+    /** @var array */
+    private static $options = [];
+
+    /** @var \Fapi\FapiClient\FapiClient */
+    private static $client;
+
+    /** @var string */
+    private static $error_message = '';
+
+    /** @var int */
+    private static $error_code = 0;
+
+    /** @var bool */
+    private static $credentials_valid;
+
+
+    public static function init()
     {
-        $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" neregistrujeme žádnou objednávku ani platbu (kód 004 - žádné doklady). \nJe emailová adresa správná?";
-        return false;
-    }
+        if (!static::$inited) {
+            static::$inited = true;
 
-    foreach ($invoices["invoices"] as $inv) {
-        if ($inv["paid"]) {  //zajimaji nas pouze uhrazene
-            foreach ($inv["items"] as $item) {
-                if (in_array(strtolower($item["name"]), array_map('strtolower', $invoice))) //pro jistotu porovnavat case-insensitive
-                    return true;
+            static::$options = get_option(static::OPTIONS_NAME);
+
+            if (!is_array(static::$options)) {
+                static::$options = [];
             }
+
+            static::register_hooks();
         }
     }
 
-    //Faktury existuji, v zadne neni pozadovany text
-    $lockerErrorMessage = "Pro e-mail \"".htmlspecialchars($email)."\" se nepodařilo nalézt platbu za tento obsah (kód 005).";
-    return false;
-}
 
-/**
- * Rozdeli string podle vicero oddelovacu.
- *
- * Priklad: $exploded = multiexplode(array(",",".","|",":"),$text);
- *
- * @param $delimiters array of string Pole oddelovacu
- * @param $string string Rozdelovany text
- * @return array Vrati pole rozdelenych textu.
- */
-function multiexplode ($delimiters,$string) {
+    private static function log(string $message, string $url = null)
+    {
+        if (empty($url)) {
+            $url = $_SERVER['REQUEST_URI'];
+        }
 
-    $ready = str_replace($delimiters, $delimiters[0], $string);
-    $launch = explode($delimiters[0], $ready);
-    return  $launch;
-}
+        $message = date('[Y-m-d H:i:s]') . ' ' . $message . ' @ URL: ' . $url . PHP_EOL;
+        file_put_contents(__DIR__ . '/log/' . date('Y-m_') . 'log.log', $message, FILE_APPEND);
+    }
 
-/**
- * Overi, zda $email ma opravneni lockeru k prispevku $postId.
- *
- * Nejprve se provadi kontrola dle vyjmenovanych emailu u prispevku (volba <i>lockerAllowedEmail</i>).
- *
- * Pri neuspechu se pokracuje kontrolou emailu ve FAPI, kdy je dohledavana pro email uhrazena polozka faktury.
- * Musi se jednat o takovou polozku, jejiz text obsahuje text uvedeny u prispevku ve volbe <i>lockerInvoce<i>.
- *
- * @param string $email Email uzivatele, ktery se pokousi pristoupit k obsahu.
- * @param int $postID Unikatni ID kontrolovaneho prispevku.
- * @return bool             Vrati true, pokud je email opravnen pristoupit k obsahu. Jinak vrati false.
- */
-function lockerCheckEmail($email, $postID)
-{
-    global $lockerErrorMessage;
 
-    debug_fapi("lockerCheckEmail($email, $postID)...started");
-    //Emaily validovat v lower case. Jako oddelovace akceptovat vice moznosti (carky, konce radek...)
+    /**
+     * @param $delimiters
+     * @param $string
+     *
+     * @return array
+     */
+    private static function multiexplode(array $delimiters, string $string): array
+    {
+        foreach ($delimiters as &$delimiter) {
+            $delimiter = preg_quote($delimiter, '/');
+        }
 
-    $email = strtolower($email);
-    $getMails = multiexplode(array(",", ";", "\r\n", "\n"), strtolower(get_post_meta($postID, "lockerAllowedEmails", TRUE)));
-    if (in_array($email, $getMails)) {
-        debug_fapi("lockerCheckEmail($email, $postID) = allowed email");
-        return true;
-    } else {
-        debug_fapi("lockerCheckEmail($email, $postID) = not in allowed emails, verifying in FAPI...");
-        if (fapiCheckInvoice($email, get_post_meta($postID, "lockerInvoice", TRUE))) {
-            debug_fapi("lockerCheckEmail($email, $postID) = FAPI validated");
-            return true;
+        return preg_split('/(' . implode('|', $delimiters) . ')/', $string, -1, PREG_SPLIT_NO_EMPTY);
+    }
+
+
+    /**
+     * @param string $message
+     * @param int $err_code
+     */
+    private static function set_error_message(string $message, int $err_code = 0)
+    {
+        static::$error_message = $message;
+        static::$error_code = $err_code;
+    }
+
+
+    /**
+     * @return string
+     */
+    public static function get_error_message(): string
+    {
+        return static::$error_message;
+    }
+
+
+    /**
+     * @return string
+     */
+    public static function get_error_message_as_html(): string
+    {
+        $message = static::get_error_message();
+
+        if (empty($message)) {
+            return '';
+        }
+
+        return "<div class='fapi_locker_error lockerError'>" . wpautop($message) . "</div>\n";
+    }
+
+
+    private static function get_current_post_id()
+    {
+        return url_to_postid(filter_input(INPUT_SERVER, 'REQUEST_URI'));
+    }
+
+
+    /**
+     * @param int $post_id
+     *
+     * @return false|string
+     */
+    private static function get_post_url(int $post_id)
+    {
+        return get_permalink($post_id);
+    }
+
+
+    private static function get_post_meta(int $post_id)
+    {
+        $meta = get_post_custom($post_id);
+
+        return array_combine(array_keys($meta), array_column($meta, '0'));
+    }
+
+
+    /**
+     * @param string|null $key
+     *
+     * @return array|string|null
+     */
+    private static function get_cookie(int $key = null)
+    {
+        if (isset($_COOKIE[static::COOKIE_NAME])) {
+            $cookie = $_COOKIE[static::COOKIE_NAME];
         } else {
-            debug_fapi("lockerCheckEmail($email, $postID) = FAPI validation failed");
-            debug_fapi("reason: $lockerErrorMessage");
-            return false;
+            $cookie = null;
         }
-    }
-    debug_fapi("lockerCheckEmail($email, $postID) = FALSE unknown / unpredicted reason");
-    return false;
-}
 
-/**
- * Sestavi URL pro aktualni stranku. Reflektuje protokol, vyhodi vychozi port, jedna-li se o standardni 80ku.
- *
- * @return string URL aktualni stranky
- */
-function getCurrentPageURL()
-{
-    $pageURL = 'http';
-    if ($_SERVER["HTTPS"] == "on") {
-        $pageURL .= "s";
-    }
-    $pageURL .= "://";
-    if ($_SERVER["SERVER_PORT"] != "80") {
-        $pageURL .= $_SERVER["SERVER_NAME"] . ":" . $_SERVER["SERVER_PORT"] . $_SERVER["REQUEST_URI"];
-    } else {
-        $pageURL .= $_SERVER["SERVER_NAME"] . $_SERVER["REQUEST_URI"];
-    }
-    return $pageURL;
-}
-
-/**
- * Ziska ID prispevku aktualni URL adresy.
- * @return int identifikator prispevku jako cislo
- */
-function getCurrentPostId()
-{
-    global $wp_rewrite, $wp;
-
-    //Inicializace globalu, ktere vyuziva funkce url_to_postid. Kez by byla jejich potreba nekde popsana! ;)
-    if (!$wp_rewrite)
-        $wp_rewrite = new WP_Rewrite();
-    if (!$wp)
-        $wp = new WP();
-
-    //Preloz URL na PostId. Vyuzije se k tomu jak wp_rewrite, tak nastaveni permalinku a pak i par zajimavych chytristik.
-    $result = url_to_postid($_SERVER["REQUEST_URI"]);
-    if (isset($result) and $result) {
-        debug_fapi("currentPostId (real) = ". $result);
-        return $result;
-    }
-
-    global $wpdb;
-    $getSlug = explode("/", $_SERVER['REQUEST_URI']);
-
-    if (($getSlug[count($getSlug) - 1] != "") && (strpos($getSlug[count($getSlug) - 1], "?"))) {
-        $slug = $getSlug[count($getSlug) - 1];
-    } else {
-        $slug = $getSlug[count($getSlug) - 2];
-    }
-
-    $sql = "
-      SELECT
-         ID
-      FROM
-         $wpdb->posts
-      WHERE
-        post_name = \"$slug\"
-   ";
-
-    debug_fapi("currentPostId (probably) = ". $result);
-    return $wpdb->get_var($sql);
-}
-
-/**
- * Zkontroluje pritomnost overovaci cookie. Neni-li pritomna, zkusi provest autorizaci emailem prihlaseneho uzivatele.
- * @param $postID int Ciselne ID prispevku ci stranky.
- * @return bool Vrati true, pokud je pristup povolen. Jinak vrati false.
- */
-function lockerCheckCookieOrUser($postID)
-{
-    if (isset($_COOKIE["postLocker"]) && isset($_COOKIE["postLocker"][$postID])) {
-        $gotkey = $_COOKIE["postLocker"][$postID];
-        $mykey = countLockerKey($postID);
-        debug_fapi("lockerKey COOK = " . $gotkey);
-        if ($mykey == $gotkey) {
-            //TODO verze 2.1 jeste validovala $_COOKIE["postLockerM"][$postID], coz zrychli zneplatneni cookie v pripade chybne autorizace (=pokud o neopravneny pristup), na druhe strane tim ukaze email overeneho uzivatele.
-            debug_fapi("lockerCheckCookieOrUser($postID) = cookie OK");
-            return true;
+        if (!is_array($cookie)) {
+            return null;
         }
-    } elseif (is_user_logged_in()) {
-        global $current_user;
-        get_currentuserinfo();
-        debug_fapi("validating current logged in user");
 
-        if (lockerCheckEmail($current_user->user_email, $postID)) {
-            debug_fapi("lockerCheckCookieOrUser($postID) = current user OK");
-            return true;
+        if ($key === null) {
+            return $cookie;
         }
+
+        if (array_key_exists($key, $cookie) && is_string($cookie[$key])) {
+            return $cookie[$key];
+        }
+
+        return null;
     }
 
-    debug_fapi("lockerCheckCookieOrUser($postID) = FALSE");
-    return false;
 
-    /*{
-        if ((isset($_COOKIE["postLocker"][$postID]) && ($_COOKIE["postLocker"][$postID] == md5(get_bloginfo("url") . $postID . get_the_title($postID))))) {
-            if ((isset($_COOKIE["postLockerM"][$postID]) && (lockerCheckEmail($_COOKIE["postLockerM"][$postID], $postID)))) {
+    /**
+     * @param int $post_id
+     *
+     * @return string
+     */
+    private static function create_key(int $post_id): string
+    {
+        return rtrim(base64_encode(md5(md5((string)$post_id, true), true)), '=');
+    }
+
+
+    /**
+     * @param int $post_id
+     *
+     * @return bool
+     */
+    private static function check_cookie_or_user(int $post_id): bool
+    {
+        $cookie = static::get_cookie($post_id);
+
+        if (!empty($cookie)) {
+            $mykey = static::create_key($post_id);
+            static::log(__METHOD__ . ' COOK = ' . $cookie);
+
+            if ($mykey === $cookie) {
+                //TODO verze 2.1 jeste validovala $_COOKIE["postLockerM"][$postID], coz zrychli zneplatneni cookie v pripade chybne autorizace (=pokud o neopravneny pristup), na druhe strane tim ukaze email overeneho uzivatele.
+                static::log(__METHOD__ . "($post_id) = cookie OK");
                 return true;
             }
         } elseif (is_user_logged_in()) {
-            global $current_user;
-            get_currentuserinfo();
+            static::log('validating current logged in user');
 
-            if (lockerCheckEmail($current_user->user_email, $postID)) {
+            $WP_User = wp_get_current_user();
+
+            if (static::check_email($WP_User->user_email, $post_id)) {
+                static::log(__METHOD__ . "($post_id) = current user OK");
                 return true;
             }
         }
 
+        static::log(__METHOD__ . "($post_id) = FALSE");
         return false;
-
-    }*/
-}
-
-/**
- * Vrati URL na prispevek/stranku dle ID prispevku
- *
- * @param $postId int Ciselne ID prispevku.
- * @return string Absolutni URL. V pripade neexistence prispevku URL pro site.
- */
-function getPostURL($postId) {
-    global $wp_rewrite;
-    if (!$wp_rewrite)
-        $wp_rewrite = new WP_Rewrite();
-    $result = get_permalink($postId);
-    if (!$result)
-        $result = get_site_url($postId);
-    return $result;
-}
-
-
-// Zde se obsluhuje pozadavek na odemknuti obsahu dle emailove adresy.
-// Pres POST prichazi bud jako "lockerMail", ktery vyplnil uzivatel ve zde vygenerovanem
-// formulari. Alternativne muze prijit pres GET jako hodnota "unlock".
-
-error_log("\n"); //pro citelnejsi vypisy v logu
-debug_fapi(
-    "REQUEST:"
-    . " " .(isset($_POST["lockerMail"]) ? "POST(lockerMail)=" . $_POST["lockerMail"] : "POST(lockerMail)=null")
-    . " ; " . (isset($_GET["unlock"]) ? "GET(unlock)=" . $_GET["unlock"] : "GET(unlock)=null")
-);
-
-unset($emailToValidate);
-if (isset($_POST["lockerMail"])) {
-    $emailToValidate = $_POST["lockerMail"];
-} elseif (isset($_GET["unlock"])) {
-    $emailToValidate = $_GET["unlock"];
-}
-
-if(isset($emailToValidate) && !empty($emailToValidate)) {
-    debug_fapi("validating email \"$emailToValidate\"");
-
-    $postID = getCurrentPostId();
-    if (lockerCheckEmail(addslashes($_POST["lockerMail"]), $postID)) {
-        // Pristup povolen. Uloz cookie a refreshni stranku.
-        //TODO Nebo rovnou generuj povoleny obsah pro usetreni jednoho kolecka? Otazkou je, jak pak dostat cookie do prohlizece klienta - musel by se nejakym separe async callem.
-        $lockerHash = countLockerKey($postID);
-        debug_fapi("setting cookie 'postLocker[$postID]' = " . $lockerHash);
-        setcookie("postLocker[" . $postID . "]", $lockerHash, time() + 60 * 60 * 24 * 90, "/");
-//        setcookie("postLockerM[" . $postID . "]", $_POST["lockerMail"], time() + 60 * 60 * 24 * 90, "/"); //TODO toto je z 2.1 a je to bezpecnostni dira
-        //adresa pro presmerovani
-        $redirectUrl = getPostURL($postID);
-        debug_fapi("redirecting to " . $redirectUrl);
-        header("location:" . $redirectUrl);
-        status_header(302);
-        //Ukonci nasledne generovani stranky.
-        debug_fapi("exit");
-        exit;
-    } else {
-        //Pokud neni napr. z validace platby dostupna konkretnejsi zprava, pouzij vychozi.
-        if (!$lockerErrorMessage)
-            $lockerErrorMessage = "Tento obsah prozatím nemáte zakoupený (kód 100). \nPro přístup je nutné obsah odemknout pomocí oprávněného e-mailu nebo zakoupit.";
-    }
-}
-
-/**
- * Vrati do HTML zformatovanou zpravu z globalni $lockerErrorMessage v DIVu nebo prazdny text. Ve zprave prevede znaky
- * noveho radku na BR.
- *
- * @return string Zprava v HTML nebo nic.
- */
-function lockerGetErrorMessageAsHTML()
-{
-    global $lockerErrorMessage;
-
-    if (isset($lockerErrorMessage) && !empty($lockerErrorMessage)) {
-        return "<div class='fapi_locker_error lockerError'>" . wpautop($lockerErrorMessage) . "</div>\n";
-    } else return "";
-}
-
-/**
- * Hook zaveseny na generovani obsahu. Pokud se nepodari overit, ze obsah ma byt dostupny, nahradi obsah za zpravu z lockeru
- * o zakazanem obsahu a nutnosti obsah odemknout emailem nebo zakoupit.
- * @param $content string Skutecny obsah stranky.
- * @return string Novy obsah stranky - puvodni ci info o zakazanem pristupu.
- */
-function postLocker($content)
-{
-    global $post, $lockerErrorMessage, $emailToValidate;
-
-    if ($GLOBALS['post']->ID == "") {
-        $postID = $GLOBALS['post']->ID;
-    } else {
-        $postID = $post->ID;
     }
 
-    if (get_post_meta($postID, "lockerActive", TRUE) == '1') {
-        debug_fapi("postLocker($postID) = locker ACTIVE");
 
-        if (lockerCheckCookieOrUser($postID)) {
-            debug_fapi("postLocker($postID) = returning CONTENT");
-            return $content;
+    private static function check_email($email, $post_id)
+    {
+        static::log(__METHOD__ . "($email, $post_id)...started");
+        //Emaily validovat v lower case. Jako oddelovace akceptovat vice moznosti (carky, konce radek...)
+
+        if ($email) {
+            $email = strtolower($email);
         }
-//        add_filter('the_excerpt', 'postLockerExcerpt');
 
-        $lockerContent = "";
+        if (get_post_meta($post_id, static::META_ALLOWED_EMAILS, true)) {
+            $mailsWithoutSpaces = str_replace(' ', '', strtolower(get_post_meta($post_id, static::META_ALLOWED_EMAILS, true)));
 
-        // Pro generovani prodejniho formulare potrebujeme funkcni pristup na FAPI.
-        if (!fapiCheckCredentials()) {
-            debug_fapi("postLocker($postID) = returning LOCKER - FAPI not connected");
-            $lockerContent .= lockerGetErrorMessageAsHTML();
+            $getMails = static::multiexplode([',', ';', "\r\n", "\n"], $mailsWithoutSpaces);
+        } else {
+            $getMails = [];
+        }
+
+        if (self::get_options('globalEnableEmails')) {
+			$globalMailsWithoutSpaces = str_replace(' ', '', strtolower(self::get_options('globalEnableEmails')));
+
+			$getGlobalMails = static::multiexplode([',', ';', "\r\n", "\n"], strtolower($globalMailsWithoutSpaces));
+        } else {
+            $getGlobalMails = [];
+        }
+
+        if (in_array($email, $getMails, true)) {
+            static::log(__METHOD__ . "($email, $post_id) = allowed email");
+            return true;
+        } elseif (in_array($email, $getGlobalMails, true)) {
+            static::log(__METHOD__ . "($email, $post_id) = allowed global email");
+            return true;
+        } else {
+            static::log(__METHOD__ . "($email, $post_id) = not in allowed emails, verifying in FAPI...");
+
+            if (static::fapi_check_invoice($email, get_post_meta($post_id, static::META_INVOICE, true))) {
+                static::log(__METHOD__ . "($email, $post_id) = FAPI validated");
+                return true;
+            } else {
+                static::log(__METHOD__ . "($email, $post_id) = FAPI validation failed");
+                static::log(__METHOD__ . "($email, $post_id) = reason: " . static::get_error_message());
+                return false;
+            }
+        }
+
+        static::log(__METHOD__ . "($email, $post_id) = FALSE unknown / unpredicted reason");
+        return false;
+    }
+
+
+    /**
+     * @param string $option
+     *
+     * @return mixed
+     */
+    private static function get_options(string $option = null)
+    {
+        if ($option === null) {
+            return static::$options;
+        }
+
+        if (array_key_exists($option, static::$options)) {
+            return static::$options[$option];
+        }
+
+        return null;
+    }
+
+
+    /**
+     * @param array $new_options
+     * @param bool $do_not_merge
+     *
+     * @return bool
+     */
+    private static function update_options(array $new_options = [], bool $do_not_merge = false): bool
+    {
+        if (!empty($new_options)) {
+            static::$options = $new_options + ($do_not_merge ? [] : static::$options);
+        }
+
+        return \update_option(static::OPTIONS_NAME, static::$options);
+    }
+
+
+    /**
+     * @param string $username
+     * @param string $apikey
+     *
+     * @return bool
+     */
+    private function save_api_credentials(string $username, string $apikey): bool
+    {
+        return static::update_options([
+            'username' => $username,
+            'apikey' => $apikey,
+        ]);
+    }
+
+
+    /**
+     * @return string
+     */
+    private static function get_api_username(): string
+    {
+        $username = static::get_options('username');
+
+        return is_string($username) ? $username : '';
+    }
+
+
+    /**
+     * @return string
+     */
+    private static function get_api_apikey(): string
+    {
+        $apikey = static::get_options('apikey');
+
+        return is_string($apikey) ? $apikey : '';
+    }
+
+
+    /**
+     * @return bool
+     */
+    private static function is_api_credentials_filled(): bool
+    {
+        return true
+            && !empty(static::get_api_username())
+            && !empty(static::get_api_apikey());
+    }
+
+
+    /**
+     * @return \Fapi\FapiClient\FapiClient
+     */
+    private static function get_fapi_client(): \Fapi\FapiClient\FapiClient
+    {
+        if (!(static::$client instanceof \Fapi\FapiClient\IFapiClient)) {
+            require_once __DIR__ . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+
+            $factory = new \Fapi\FapiClient\FapiClientFactory();
+
+            static::$client = $factory->createFapiClient(static::get_api_username(), static::get_api_apikey());
+        }
+
+        return static::$client;
+    }
+
+
+    /**
+     * @return bool
+     */
+    private static function validate_api_credentials()
+    {
+        static::log(__METHOD__ . '()');
+
+        if (static::$credentials_valid !== null) {
+            static::log(__METHOD__ . '(): cached = ' . static::$credentials_valid);
+            return static::$credentials_valid;
+        }
+
+        if (!static::is_api_credentials_filled()) {
+            static::set_error_message("Ke službě FAPI se nelze připojit.", 1);
+            static::$credentials_valid = false;
+            return static::$credentials_valid;
+        } else {
+            try {
+                static::get_fapi_client()->checkConnection();
+
+                static::log(__METHOD__ . '() = OK');
+                static::$credentials_valid = true;
+                return static::$credentials_valid;
+            } catch (\Fapi\FapiClient\Rest\InvalidStatusCodeException $e) {
+                static::set_error_message("Ke službě FAPI se nelze připojit.", 1);
+                static::$credentials_valid = false;
+                return static::$credentials_valid;
+            } catch (Exception $e) {
+                static::set_error_message("Ke službě FAPI se nelze připojit. \n", 1);
+                static::$credentials_valid = false;
+                return static::$credentials_valid;
+            }
+        }
+    }
+
+
+    private static function fapi_check_invoice($email, $invoice)
+    {
+        static::log(__METHOD__ . '()');
+
+        //Validovat pozadavek  //TODO test na prazdny seznam
+        if (empty($invoice)) {
+            static::set_error_message('V nastavení FAPI Lockeru chybí název prodejní položky.', 101);
+            return false;
+        }
+
+        //Validovat nastaveni lockeru
+        if (empty(static::get_api_username())) {
+            static::set_error_message('V nastavení FAPI Lockeru chybí jméno uživatele pro komunikaci s FAPI.', 102);
+            return false;
+        }
+
+        if (empty(static::get_api_apikey())) {
+            static::set_error_message('V nastavení FAPI Lockeru chybí heslo pro komunikaci s FAPI.', 103);
+            return false;
+        }
+
+        if (!static::validate_api_credentials()) {
+            return false;
+        }
+
+        //Vykonny kod
+        $fapi = static::get_fapi_client();
+
+        try {
+            $clients = $fapi->getClients()->findAll(['email' => $email]);
+        } catch (Exception $e) {
+            static::set_error_message("Ke službě FAPI se nelze připojit (kód 001). \n", 1);
+            return false;
+        }
+
+        if (count($clients) == 0) {
+            static::set_error_message('Pro e-mailovou adresu "' . htmlspecialchars($email) . "\" není tento obsah přístupný.", 3);
+            return false;
+        }
+
+        $invoices = [];
+
+        try {
+            foreach ($clients as $client) {
+                $invoices = array_merge($fapi->getInvoices()->findAll(['client' => $client['id'], 'order' => 'created_on']), $invoices);
+            }
+        } catch (Exception $e) {
+            static::set_error_message("Ke službě FAPI se nelze připojit (kód 001). \n", 1);
+            return false;
+        }
+
+
+        if (!isset($invoices) || empty($invoices)) {
+            static::set_error_message('Pro e-mailovou adresu "' . htmlspecialchars($email) . "\" není tento obsah přístupný.", 4);
+            return false;
+        }
+
+        $allowed = [];
+
+        $resolvedItems = [];
+
+        foreach ($invoices as $inv) {
+            if ($inv['paid']) {
+                foreach ($inv['items'] as $item) {
+                    if (in_array(strtolower($item['name']), array_map('strtolower', $invoice), true)) {
+
+                        foreach ($invoices as $i) {
+                            foreach ($i['items'] as $it) {
+                                if ($it['name'] != $item['name']) {
+                                    continue;
+                                }
+
+                                if (isset($i['parent']) && $i['parent'] == $inv['id'] && $i['type'] == 'credit_note' && $it['name'] == $item['name']) {
+
+                                    $allowed[$item['name']] = false;
+                                } elseif ($i['paid']) {
+
+                                    $allowed[$item['name']] = true;
+                                }
+                            }
+                        }
+                        $resolvedItems[] = $item['name'];
+                    }
+                }
+            }
+        }
+
+
+        if (in_array(true, $allowed)) {
+            return true;
+        }
+
+        //Faktury existuji, v zadne neni pozadovany text
+        static::set_error_message('Pro e-mailovou adresu "' . htmlspecialchars($email) . '" není tento obsah přístupný.', 5);
+        return false;
+    }
+
+
+    /**
+     * Ulozi nastaveni z metaboxu lockeru pro stranku nebo prispevek
+     *
+     * @param int $post_id
+     */
+    public static function save_metabox($post_id)
+    {
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE === true) {
+            return;
+        }
+
+        if (!isset($_POST['lckr_metabox_n_name']) || !wp_verify_nonce($_POST['lckr_metabox_n_name'], static::METABOX_NONCE_ACTION)) {
+            return;
+        }
+
+
+        $allowed = [
+            'a' => [
+                'href' => [],
+            ],
+        ];
+
+        update_post_meta($post_id, static::META_ACTIVE, (isset($_POST['active']) ? '1' : '0'));
+
+        if (isset($_POST['not_bought'])) {
+            update_post_meta($post_id, static::META_NOT_BOUGHT, addslashes($_POST['not_bought']));
+        }
+
+        if (isset($_POST['button'])) {
+            update_post_meta($post_id, static::META_BUTTON, wp_kses($_POST['button'], $allowed));
+        }
+
+        if (isset($_POST['unlockButton'])) {
+            update_post_meta($post_id, static::META_UNLOCK_BUTTON, wp_kses($_POST['unlockButton'], $allowed));
+        }
+
+        if (isset($_POST['invoice'])) {
+            update_post_meta($post_id, static::META_INVOICE, $_POST['invoice']);
+        }
+
+        if (isset($_POST['javascriptForm'])) {
+            update_post_meta($post_id, static::META_FORM, $_POST['javascriptForm']);
+        }
+
+        if (isset($_POST['allowedEmails'])) {
+            update_post_meta($post_id, static::META_ALLOWED_EMAILS, wp_kses($_POST['allowedEmails'], $allowed));
+        }
+
+        update_post_meta($post_id, static::META_SHOW_BUTTON, (isset($_POST['showOrderForm']) ? '1' : '0'));
+    }
+
+
+    public static function unlock_post()
+    {
+        static::log(
+            'REQUEST:'
+            . ' ' . (isset($_POST['lockerMail']) ? 'POST(lockerMail)=' . $_POST['lockerMail'] : 'POST(lockerMail)=null')
+            . ' ; ' . (isset($_GET['unlock']) ? 'GET(unlock)=' . $_GET['unlock'] : 'GET(unlock)=null')
+        );
+
+        if (isset($_POST['lockerMail'])) {
+            $emailToValidate = $_POST['lockerMail'];
+        } elseif (isset($_GET['unlock'])) {
+            $emailToValidate = $_GET['unlock'];
+        }
+
+        if (isset($emailToValidate) && !empty($emailToValidate)) {
+            static::log('validating email "' . $emailToValidate . '"');
+
+            $post_id = static::get_current_post_id();
+
+            if (static::check_email(addslashes($_POST['lockerMail']), $post_id)) {
+                // Pristup povolen. Uloz cookie a refreshni stranku.
+                //TODO Nebo rovnou generuj povoleny obsah pro usetreni jednoho kolecka? Otazkou je, jak pak dostat cookie do prohlizece klienta - musel by se nejakym separe async callem.
+                $lockerHash = static::create_key($post_id);
+
+                static::log("setting cookie '" . static::COOKIE_NAME . "[$post_id]' = " . $lockerHash);
+                setcookie(static::COOKIE_NAME . '[' . $post_id . ']', $lockerHash, strtotime('+90 days'), '/');
+
+                //adresa pro presmerovani
+                $redirectUrl = static::get_post_url($post_id);
+                static::log('redirecting to ' . $redirectUrl);
+
+                status_header(302);
+                header('location:' . $redirectUrl);
+
+                //Ukonci nasledne generovani stranky.
+                static::log('exit');
+                exit;
+            } //Pokud neni napr. z validace platby dostupna konkretnejsi zprava, pouzij vychozi.
+            elseif (empty(static::get_error_message())) {
+                static::set_error_message("Tento obsah prozatím nemáte zakoupený. \nPro přístup je nutné obsah odemknout pomocí oprávněné e-mailové adresy nebo zakoupit.", 100);
+            }
+        }
+    }
+
+
+    private static function register_hooks()
+    {
+        add_action('plugins_loaded', [__CLASS__, 'hook_plugins_loaded']);
+
+        add_action('admin_init', [__CLASS__, 'hook_admin_init']);
+        add_action('admin_menu', [__CLASS__, 'hook_admin_menu']);
+        add_action('admin_enqueue_scripts', [__CLASS__, 'hook_admin_scripts']);
+        add_action('add_meta_boxes', [__CLASS__, 'hook_metabox']);
+
+        add_action('wp_enqueue_scripts', [__CLASS__, 'hook_frontend_scripts']);
+
+        add_action('save_post', [__CLASS__, 'save_metabox']);
+
+        add_action('setup_theme', [__CLASS__, 'unlock_post']);
+
+        add_filter('the_content', [__CLASS__, 'render_post_locker'], 101);
+        add_filter('get_the_excerpt', [__CLASS__, 'render_post_locker'], 101);
+
+        register_deactivation_hook(__FILE__, [__CLASS__, 'hook_deactivate']);
+        register_uninstall_hook(__FILE__, [__CLASS__, 'hook_uninstall']);
+    }
+
+
+    public static function hook_plugins_loaded()
+    {
+        load_plugin_textdomain(static::LANG_DOMAIN, false, basename(dirname(__FILE__)) . '/languages/');
+    }
+
+
+    public static function hook_deactivate()
+    {
+    }
+
+
+    public static function hook_uninstall()
+    {
+        if (!defined('WP_UNINSTALL_PLUGIN')) {
+            return;
+        }
+
+        delete_option(static::OPTIONS_NAME);
+
+        delete_post_meta_by_key(static::META_ACTIVE);
+        delete_post_meta_by_key(static::META_NOT_BOUGHT);
+        delete_post_meta_by_key(static::META_BUTTON);
+        delete_post_meta_by_key(static::META_INVOICE);
+        delete_post_meta_by_key(static::META_FORM);
+        delete_post_meta_by_key(static::META_ALLOWED_EMAILS);
+    }
+
+
+    public static function hook_admin_init()
+    {
+        register_setting(static::SETTINGS_GROUP, static::OPTIONS_NAME);
+
+        //Locker main section
+        add_settings_section(static::NAMESPACE . 'Main', __('Propojení s FAPI', static::LANG_DOMAIN), [__CLASS__, 'render_options_section'], static::SETTINGS_SLUG);
+        add_settings_field(static::NAMESPACE . 'SettingsUsername', __('Přihlašovací jméno', static::LANG_DOMAIN), [__CLASS__, 'render_options_username'], static::SETTINGS_SLUG, static::NAMESPACE . 'Main');
+        add_settings_field(static::NAMESPACE . 'SettingsAPIKey', __('API klíč', static::LANG_DOMAIN), [__CLASS__, 'render_options_apikey'], static::SETTINGS_SLUG, static::NAMESPACE . 'Main');
+
+        //Locker theme section
+        add_settings_section(static::NAMESPACE . 'Theme', __('Vzhled', static::LANG_DOMAIN), [__CLASS__, 'render_options_section'], static::SETTINGS_SLUG);
+        add_settings_field(static::NAMESPACE . 'SettingsBorder', __('Ohraničení formuláře', static::LANG_DOMAIN), [__CLASS__, 'render_options_border'], static::SETTINGS_SLUG, static::NAMESPACE . 'Theme');
+        add_settings_field(static::NAMESPACE . 'SettingsButtonBackground', __('Barva pozadí tlačítka', static::LANG_DOMAIN), [__CLASS__, 'render_options_button_background'], static::SETTINGS_SLUG, static::NAMESPACE . 'Theme');
+        add_settings_field(static::NAMESPACE . 'SettingsButtonColor', __('Barva písma tlačítka', static::LANG_DOMAIN), [__CLASS__, 'render_options_button_color'], static::SETTINGS_SLUG, static::NAMESPACE . 'Theme');
+
+        //Locker global section
+        add_settings_section(static::NAMESPACE . 'Access', __('Přístup k obsahu', static::LANG_DOMAIN), [__CLASS__, 'render_options_section'], static::SETTINGS_SLUG);
+        add_settings_field(static::NAMESPACE . 'SettingsGlobalEnableEmails', __('E-mailové adresy s univerzálním přístupem (pro všechny zamčené stránky)', static::LANG_DOMAIN), [__CLASS__, 'render_global_enable_emails'], static::SETTINGS_SLUG, static::NAMESPACE . 'Access');
+    }
+
+
+    public static function hook_admin_menu()
+    {
+        add_options_page(__('Nastavení FAPI lockeru', static::LANG_DOMAIN), __('FAPI Locker', static::LANG_DOMAIN), 'manage_options', static::SETTINGS_SLUG, [__CLASS__, 'render_options']);
+    }
+
+
+    public static function hook_admin_scripts()
+    {
+        wp_register_script(static::NAMESPACE . 'Backend', plugins_url('/assets/js/backend.js', __FILE__), ['jquery'], '1.0', true);
+        wp_enqueue_script(static::NAMESPACE . 'Backend');
+        wp_register_script(static::NAMESPACE . 'ColorPicker', plugins_url('/assets/libs/colorpicker/js/colpick.js', __FILE__), ['jquery'], '1.0', true);
+        wp_enqueue_script(static::NAMESPACE . 'ColorPicker');
+        wp_register_style(static::NAMESPACE . 'ColorPickerCSS', plugins_url('/assets/libs/colorpicker/css/colpick.css', __FILE__), [], '1.0');
+        wp_enqueue_style(static::NAMESPACE . 'ColorPickerCSS');
+        wp_register_style(static::NAMESPACE . 'BackendCSS', plugins_url('/assets/css/backend.css', __FILE__), [], '1.0');
+        wp_enqueue_style(static::NAMESPACE . 'BackendCSS');
+    }
+
+
+    public static function hook_metabox()
+    {
+        add_meta_box(static::NAMESPACE . 'Meta', 'FAPI Locker', [__CLASS__, 'render_metabox'], 'post', 'normal', 'high');
+        add_meta_box(static::NAMESPACE . 'Meta', 'FAPI Locker', [__CLASS__, 'render_metabox'], 'page', 'normal', 'high');
+    }
+
+
+    public static function hook_frontend_scripts()
+    {
+        wp_register_script(static::NAMESPACE . 'Frontend', plugins_url('/assets/js/frontend.js', __FILE__), ['jquery'], '1.0', true);
+        wp_enqueue_script(static::NAMESPACE . 'Frontend');
+
+        wp_register_style(static::NAMESPACE . 'FrontendCSS', plugins_url('/assets/css/frontend.css', __FILE__), [], '1.0');
+        wp_enqueue_style(static::NAMESPACE . 'FrontendCSS');
+    }
+
+
+    public static function render_options_section()
+    {
+    }
+
+
+    public static function render_options_username()
+    {
+        echo '<input id="lockerSettingsUsername" name="' . static::OPTIONS_NAME . '[username]" size="40" type="text" value="' . esc_html(static::get_api_username()) . '" />';
+    }
+
+
+    public static function render_options_apikey()
+    {
+        echo '<input id="lockerSettingsAPIKey" name="' . static::OPTIONS_NAME . '[apikey]" size="40" type="password" value="' . esc_html(static::get_api_apikey()) . '" />';
+
+        if (!static::validate_api_credentials()) {
+            echo '<br /><br /><strong style="font-size:15px;color:red;">' . __('Nepodařilo se připojit k FAPI. Zkontrolujte prosím své přihlašovací údaje.', static::LANG_DOMAIN) . '</strong>';
+        } else {
+            echo '<br /><br /><strong style="font-size:15px;color:green;">' . __('Připojeno k FAPI.', static::LANG_DOMAIN) . '</strong>';
+        }
+    }
+
+
+    public static function render_options_border()
+    {
+        echo '
+<select name="' . static::OPTIONS_NAME . '[border]">
+<option value="0">' . __('Bez ohraničení', static::LANG_DOMAIN) . '</option>
+<option value="1" ' . (static::get_options('border') == 1 ? 'selected' : '') . '>' . __('S ohraničením', static::LANG_DOMAIN) . '</option>
+</select>';
+    }
+
+
+    public static function render_options_button_background()
+    {
+        echo '<input id="lockerOptionsButtonBackground" name="' . static::OPTIONS_NAME . '[buttonBackground]" size="40" type="text" value="' . esc_html(static::get_options('buttonBackground') ?: '') . '" />';
+    }
+
+
+    public static function render_options_button_color()
+    {
+        echo '<input id="lockerOptionsButtonColor" name="' . static::OPTIONS_NAME . '[buttonColor]" size="40" type="text" value="' . esc_html(static::get_options('buttonColor') ?: '') . '" />';
+    }
+
+
+    public static function render_global_enable_emails()
+    {
+        echo '<textarea id="lockerGlobalEnableEmails" name="' . static::OPTIONS_NAME . '[globalEnableEmails]" cols="40" rows="5">' . esc_html(static::get_options('globalEnableEmails') ?: '') . '</textarea><br/>Adresy oddělujte čárkou. ';
+    }
+
+
+    public static function render_options()
+    {
+        echo '
+<div class="wrap">
+<h2>' . __('Nastavení rozšíření FAPI Locker', static::LANG_DOMAIN) . '</h2>
+<form method="post" action="options.php">';
+
+        settings_fields(static::SETTINGS_GROUP);
+        do_settings_sections(static::SETTINGS_SLUG);
+        submit_button();
+
+        echo '
+</form>
+</div>
+';
+    }
+
+
+    public static function render_metabox()
+    {
+        global
+        $post;
+        $values = static::get_post_meta((int)$post->ID);
+
+        // Zkontroluj, zda je funkcni FAPI pripojeni. Bez nej nema nastavnei smysl.
+        if (!static::validate_api_credentials()) {
+            echo '<br /><strong class="fapi_locker_error lockerError">' . __('Propojení s FAPI není funkční.', static::LANG_DOMAIN) . '</strong>'
+                . '<br /><br />'
+                . __('Správné přihlašovací údaje zadejte v ', static::LANG_DOMAIN) . '<a href="' . esc_html(admin_url() . 'options-general.php?page=' . static::SETTINGS_SLUG) . '">' . __('nastavení FAPI lockeru', static::LANG_DOMAIN) . '</a>.';
+
+            return;
+        }
+
+        $fapi_client = static::get_fapi_client(); ?>
+
+        <div id="lockerMeta">
+            <?php
+                wp_nonce_field(static::METABOX_NONCE_ACTION, 'lckr_metabox_n_name'); ?>
+
+            <label for="active"
+                   style="font-size: 14px;"><?php echo __('Zamknout stránku', static::LANG_DOMAIN); ?></label>
+            <input type="checkbox" id="active" name="active"
+                   value="1" <?php echo $values[static::META_ACTIVE] === '1' ? 'checked' : ''; ?>>
+            <label for="active">Toggle</label>
+
+            <div class="clear"></div>
+
+            <div id="activeLocker" <?php echo (isset($values[static::META_ACTIVE]) && $values[static::META_ACTIVE] === '1') ? 'style="display:block;"' : ''; ?>>
+                <label for="not_bought"
+                       style="font-size: 14px;"><?php echo __('Text zobrazený před udělením přístupu', static::LANG_DOMAIN); ?></label>
+                <?php wp_editor('' . (!isset($values[static::META_NOT_BOUGHT]) ? '' : stripslashes($values[static::META_NOT_BOUGHT])) . '', 'not_bought'); ?>
+
+                <div class="clear"></div>
+
+                <label for="invoice"
+                       style="font-size: 14px;"><?php echo __('Produkt udělující přístup k obsahu', static::LANG_DOMAIN); ?></label>
+
+                <?php
+                    $itemTemplates = $fapi_client->getItemTemplates()->findAll();
+                    $invoiceItems = (isset($values[static::META_INVOICE]) ? maybe_unserialize($values[static::META_INVOICE]) : []);
+
+                    echo '<select name="invoice[]" id="invoice">';
+
+                    foreach ($itemTemplates as $item) {
+                        echo '<option ' . ($invoiceItems[0] == $item['name'] ? 'selected' : '') . '>' . $item['name'] . '</option>';
+                    }
+
+                    echo '</select>'; ?>
+                <div id="invoiceSelects">
+                    <?php
+                        if (!empty($itemTemplates)) {
+                            if (isset($_GET['action']) == 'edit') {
+                                $n = 0;
+                                foreach ($invoiceItems as $invoiceItem) {
+                                    $n++;
+
+                                    if ($n == 1) {
+                                        continue;
+                                    }
+
+                                    echo '<div><select name="invoice[]">';
+                                    foreach ($itemTemplates as $item) {
+                                        echo '<option ' . ($invoiceItem == $item['name'] ? 'selected' : '') . '>' . $item['name'] . '</option>';
+                                    }
+                                    echo '</select>&nbsp;<a class="removeInvoice" href="#">X</a> <div class="clear"></div></div>';
+                                }
+                            }
+                        } ?>
+
+                </div>
+                <a href="#" id="addInvoice"><?php echo __('Přidat další produkt', static::LANG_DOMAIN); ?></a>
+
+                <div class="clear"></div>
+
+                <label for="unlockbutton"
+                       style="font-size: 14px;"><?php echo __('Text odkazu pro odemčení obsahu', static::LANG_DOMAIN); ?></label>
+
+                <div class="clear"></div>
+
+                <input id="button" name="unlockButton"
+                       value="<?php echo !isset($values[static::META_UNLOCK_BUTTON]) ? 'Mám koupeno, chci odemknout obsah' : $values[static::META_UNLOCK_BUTTON]; ?>"/>
+
+                <div class="clear"></div>
+
+                <label for="allowedEmails"
+                       style="font-size: 14px;"><?php echo __('E-mailové adresy s univerzálním přístupem (pro tuto stránku)', static::LANG_DOMAIN); ?></label>
+                <textarea name="allowedEmails"
+                          id="allowedEmails"><?php echo isset($values[static::META_ALLOWED_EMAILS]) ? $values[static::META_ALLOWED_EMAILS] : ''; ?></textarea><br/>
+                <?php echo __('Adresy oddělujte čárkou.', static::LANG_DOMAIN); ?>
+
+                <div class="clear"></div>
+
+                <label for="showOrderForm"
+                       style="font-size: 14px;"><?php echo __('Zobrazit tlačítko pro zakoupení přístupu', static::LANG_DOMAIN); ?></label>
+                <input type="checkbox" id="showOrderForm" name="showOrderForm"
+                       value="1" <?php echo $values[static::META_SHOW_BUTTON] === '0' ? '' : 'checked'; ?>>
+                <label for="showOrderForm">Toggle</label>
+
+
+                <div class="clear"></div>
+                <div id="activeShowOrderForm">
+                    <label for="button"
+                           style="font-size: 14px;"><?php echo __('Text tlačítka pro zobrazení prodejního formuláře', static::LANG_DOMAIN); ?></label>
+
+                    <div class="clear"></div>
+                    <input id="button" name="button"
+                           value="<?php echo !isset($values[static::META_BUTTON]) ? 'Zakoupit' : $values[static::META_BUTTON]; ?>"/>
+
+
+                    <div class="clear"></div>
+
+                    <label for="javascriptForm"
+                           style="font-size: 14px;"><?php echo __('Prodejní formulář pro zakoupení přístupu', static::LANG_DOMAIN); ?></label>
+                    <select name="javascriptForm" id="javascriptForm">
+                        <?php
+                            $forms = $fapi_client->forms->findAll();
+                            if (!empty($forms)) {
+                                foreach ($forms as $form) {
+                                    echo '<option value="' . $form['id'] . '" ' . ($values['lockerForm'][0] == $form['id'] ? 'selected' : '') . '>' . $form['name'] . '</option>';
+                                }
+                            } ?>
+                    </select>
+
+                    <div class="clear"></div>
+                </div>
+                <br/>
+                <a href="<?php echo esc_attr(get_admin_url() . 'options-general.php?page=' . static::SETTINGS_SLUG); ?>"
+                   target="_blank">
+                    <?php echo __('Nastavení FAPI Lockeru', static::LANG_DOMAIN); ?>
+                </a>
+                <br/>
+            </div>
+        </div>
+        <?php
+    }
+
+
+    public static function render_post_locker($content)
+    {
+        global $emailToValidate;
+
+        $post_id = get_the_ID();
+
+        if (get_post_meta($post_id, static::META_ACTIVE, true) == '1') {
+            // Deaktivovat CACHE pro tuto stranku
+            if (!defined('DONOTCACHEPAGE')) {
+                define('DONOTCACHEPAGE', true);
+            }
+
+            static::log(__METHOD__ . "($post_id) = locker ACTIVE");
+
+            if (static::check_cookie_or_user($post_id)) {
+                static::log(__METHOD__ . "($post_id) = returning CONTENT");
+                return $content;
+            }
+
+            $lockerContent = '';
+
+            // Pro generovani prodejniho formulare potrebujeme funkcni pristup na FAPI.
+            if (!static::validate_api_credentials()) {
+                static::log(__METHOD__ . "($post_id) = returning LOCKER - FAPI not connected");
+                $lockerContent .= static::get_error_message_as_html();
+                return $lockerContent;
+            }
+
+            $fapiSettings = static::get_options();
+
+            $fapi = static::get_fapi_client();
+
+            $form_id = (int)(get_post_meta($post_id, static::META_FORM, true));
+
+            $fapiForm = $fapi->getForms()->find($form_id); //TODO hodila by se tu kontrola, ze form existuje (nekdo ho mohl prejmenovat/smaznout...)
+
+            // Pokud formular nebyl nalezen ...
+            if ($fapiForm === null) {
+                // ... informuj o tom zakaznika, ze formular byl odstranen
+                return __('Článek není možné odemknout, jelikož autor odstranil FAPI formulář', static::LANG_DOMAIN);
+            }
+
+            // Predcachovat styl pro tlacitka.
+            $lockerButtonStyleHtml =
+                (isset($fapiSettings['buttonBackground']) && !empty($fapiSettings['buttonBackground']) || isset($fapiSettings['buttonColor']) && !empty($fapiSettings['buttonColor']))
+                    ? (
+                    'style="'
+                    . (isset($fapiSettings['buttonBackground']) && !empty($fapiSettings['buttonBackground']) ? 'background-color:#' . $fapiSettings['buttonBackground'] . ';' : '')
+                    . ''
+                    . (isset($fapiSettings['buttonColor']) && !empty($fapiSettings['buttonColor']) ? 'color:#' . $fapiSettings['buttonColor'] . '' : '')
+                    . '"'
+                ) : '';
+
+            // Pokud je evidovana chyba z vyhodnoceni, vypis ji.
+            $lockerContent .= static::get_error_message_as_html();
+
+            $lockerContent .= '<div id="lockerBox" class="' . ($fapiSettings['border'] == 1 ? 'border' : '') . '"><div id="lockerBoxInner">';
+
+            // Locker funguje pouze pro stranky a prispevky. Pro stranky vyhledavani a obsahu pouzit zkracenou verzi.
+            if (!(is_single() || is_page())) {
+                $lockerContent .= stripslashes(get_post_meta($post_id, static::META_NOT_BOUGHT, true))
+                    . "\n<br />" . __('Akci můžete provést na', static::LANG_DOMAIN) . ' <a href="' . static::get_post_url($post_id) . '">' . __('stránce s obsahem', static::LANG_DOMAIN) . '</a>.';
+            } else {
+                $values = static::get_post_meta($post_id);
+                $lockerContent .= stripslashes(wpautop(get_post_meta($post_id, static::META_NOT_BOUGHT, true)));
+
+                // Generuj prodejni form.
+                if (get_post_meta($post_id, static::META_SHOW_BUTTON, true) == '1') {
+                    $lockerContent .= '<input type="button" id="lockerBuyButton" value="' . get_post_meta($post_id, static::META_BUTTON, true) . '" ' . $lockerButtonStyleHtml . ' />';
+
+                    $lockerContent .= '<br class="hide" />';
+                }
+
+                if (strlen(get_post_meta($post_id, static::META_UNLOCK_BUTTON, true)) > 0) {
+                    $lockerContent .= '<a href="#!" id="lockerCheckMailButton">' . get_post_meta($post_id, static::META_UNLOCK_BUTTON, true) . '' . '</a>';
+
+                    $lockerContent .= '<br class="hide" />';
+                } else {
+                    $lockerContent .= '<a href="#!" id="lockerCheckMailButton">Mám koupeno, chci odemknout obsah</a>';
+
+                    $lockerContent .= '<br class="hide" />';
+                }
+
+                // Generuj odemykaci FORM podle emailu.
+                $lockerContent .= '
+<div id="lockerCheckMail">
+    <form action="" method="post">
+        <label for="lockerMail">' . __('Zadejte e-mailovou adresu, kterou jste použili v objednávce', static::LANG_DOMAIN) . '. </label>
+        <input type="text" name="lockerMail" id="lockerMail" ' . (isset($emailToValidate) ? 'value="' . esc_attr($emailToValidate) . '"' : '') . ' />
+        <input type="submit" value="Odemknout" ' . $lockerButtonStyleHtml . ' />
+    </form>
+</div>';
+                $lockerContent .= '<br />';
+                $lockerContent .= '<div id="lockerForm">' . $fapiForm['html_code'] . '</div>';
+                $lockerContent .= '<a id="fapiLocker" href="https://fapi.cz/fapi-locker/" target="_blank"><strong>FAPI</strong> Locker</a>';
+            }
+            $lockerContent .= '</div></div>';
+
+            static::log(__METHOD__ . "($post_id) = returning LOCKER");
             return $lockerContent;
         }
-
-        $fapiSettings = get_option("lockerOptions");
-        $fapi = new FAPIClient($fapiSettings["username"], $fapiSettings["password"]);
-        $fapiForm = $fapi->form->get(get_post_meta($postID, "lockerForm", TRUE)); //TODO hodila by se tu kontrola, ze form existuje (nekdo ho mohl prejmenovat/smaznout...)
-
-        // Predcachovat styl pro tlacitka.
-        $lockerButtonStyleHtml =
-            (isset($fapiSettings["buttonBackground"]) && !empty($fapiSettings["buttonBackground"]) || isset($fapiSettings["buttonColor"]) && !empty($fapiSettings["buttonColor"]))
-                ? (
-                "style=\""
-                . (isset($fapiSettings["buttonBackground"]) && !empty($fapiSettings["buttonBackground"]) ? "background-color:#" . $fapiSettings["buttonBackground"] . ";" : "")
-                . ""
-                . (isset($fapiSettings["buttonColor"]) && !empty($fapiSettings["buttonColor"]) ? "color:#" . $fapiSettings["buttonColor"] . "" : "")
-                . "\""
-            ) : "";
-
-        // Pokud je evidovana chyba z vyhodnoceni, vypis ji.
-        $lockerContent .= lockerGetErrorMessageAsHTML();
-
-        $lockerContent .= "<div id=\"lockerBox\" class=\"" . ($fapiSettings["border"] == 1 ? "border" : "") . "\"><div id=\"lockerBoxInner\">";
-
-        // Locker funguje pouze pro stranky a prispevky. Pro stranky vyhledavani a obsahu pouzit zkracenou verzi.
-        if (!(is_single() || is_page())) {
-            $lockerContent .= stripslashes(get_post_meta($postID, "lockerNotBought", TRUE))
-                . "\n<br />Akci můžete provést na <a href=\"". getPostURL($postID) ."\">stránce s obsahem</a>.";
-        } else {
-            $lockerContent .= stripslashes(wpautop(get_post_meta($postID, "lockerNotBought", TRUE)));
-            // Generuj odemykaci FORM podle emailu.
-            $lockerContent .= "<br />";
-            $lockerContent .= "<div id=\"lockerCheckMail\">
- 	 	<form action=\"\" method=\"post\">
- 	 	<label for=\"lockerMail\">Zadejte e-mail</label>
- 	 	<input type=\"text\" name=\"lockerMail\" id=\"lockerMail\" "
-                . (isset($emailToValidate) ? "value=\"".htmlspecialchars($emailToValidate)."\"" : "")
-                ." />
- 	 	<input type=\"submit\" value=\"Odemknout\" " . $lockerButtonStyleHtml . " />
- 	 	</form>
- 	 	</div>";
-            $lockerContent .= "<input type=\"button\" id=\"lockerCheckMailButton\" value=\"Mám koupeno, chci odemknout obsah\" ". $lockerButtonStyleHtml ." />";
-            // Generuj prodejni form.
-            $lockerContent .= "<br />";
-            $lockerContent .= "<input type=\"button\" id=\"lockerBuyButton\" value=\"" . get_post_meta($postID, "lockerButton", TRUE) . "\" ". $lockerButtonStyleHtml ." />";
-            $lockerContent .= "<div id=\"lockerForm\">" . $fapiForm["html_code"] . "</div>";
-            $lockerContent .= "<a id=\"fapiLocker\" href=\"http://fapi.cz/fapi-locker/\" target=\"_blank\"><strong>FAPI</strong> Locker</a>";
-        }
-        $lockerContent .= "</div></div>";
-
-        debug_fapi("postLocker($postID) = returning LOCKER");
-        return $lockerContent;
-
-    }
-    debug_fapi("postLocker(ORIGINAL_CONTENT) = locker INACTIVE");
-    return $content;
-}
-add_filter('the_content', 'postLocker', 100);
-
-
-function postLockerExcerpt($content)
-{
-    global $post;
-
-    if ($GLOBALS['post']->ID == "") {
-        $postID = $GLOBALS['post']->ID;
-    } else {
-        $postID = $post->ID;
-    }
-    if (empty($post->post_excerpt)) {
+        static::log(__METHOD__ . '(ORIGINAL_CONTENT) = locker INACTIVE');
         return $content;
-    } else {
-        return $post->post_excerpt . "<br /><br />";
     }
-
 }
-add_filter('get_the_excerpt', 'postLocker', 100);
 
-?>
+FAPI_Locker::init();

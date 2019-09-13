@@ -1,0 +1,7 @@
+/composer.lock
+/tests/locks/*
+/tests/php.ini
+/vendor/*
+.idea
+/tests/**/output/*
+/tests/Fapi/FapiClientTests/DI/tmp/

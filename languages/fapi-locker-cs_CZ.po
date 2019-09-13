@@ -1,0 +1,175 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: FAPI Locker\n"
+"POT-Creation-Date: 2019-09-12 22:33+0200\n"
+"PO-Revision-Date: 2019-09-12 22:33+0200\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: cs_CZ\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 2.2\n"
+"X-Poedit-Basepath: ..\n"
+"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n>=2 && n<=4 ? 1 : 2);\n"
+"X-Poedit-Flags-xgettext: --add-comments=translators:\n"
+"X-Poedit-WPHeader: locker.php\n"
+"X-Poedit-SourceCharset: UTF-8\n"
+"X-Poedit-KeywordsList: __;_e;_n:1,2;_x:1,2c;_ex:1,2c;_nx:4c,1,2;esc_attr__;"
+"esc_attr_e;esc_attr_x:1,2c;esc_html__;esc_html_e;esc_html_x:1,2c;"
+"_n_noop:1,2;_nx_noop:3c,1,2;__ngettext_noop:1,2\n"
+"X-Poedit-SearchPath-0: .\n"
+"X-Poedit-SearchPathExcluded-0: *.js\n"
+
+#: locker.php:632
+msgid "Přístup do FAPI"
+msgstr "Přístup do FAPI"
+
+#: locker.php:633
+msgid "Přihlašovací jméno"
+msgstr "Přihlašovací jméno"
+
+#: locker.php:634
+msgid "API klíč"
+msgstr "API klíč"
+
+#: locker.php:637
+msgid "Vzhled"
+msgstr "Vzhled"
+
+#: locker.php:638
+msgid "Ohraničení formuláře"
+msgstr "Ohraničení formuláře"
+
+#: locker.php:639
+msgid "Barva pozadí tlačítka"
+msgstr "Barva pozadí tlačítka"
+
+#: locker.php:640
+msgid "Barva písma tlačítka"
+msgstr "Barva písma tlačítka"
+
+#: locker.php:645
+msgid "Nastavení FAPI lockeru"
+msgstr "Nastavení FAPI lockeru"
+
+#. Plugin Name of the plugin/theme
+#: locker.php:645
+msgid "FAPI Locker"
+msgstr "FAPI Locker"
+
+#: locker.php:698
+msgid "Bez ohraničení"
+msgstr "Bez ohraničení"
+
+#: locker.php:699
+msgid "S ohraničením"
+msgstr "S ohraničením"
+
+#: locker.php:717
+msgid "Nastavení rozšíření FAPI Locker"
+msgstr "Nastavení rozšíření FAPI Locker"
+
+#: locker.php:722
+msgid ""
+"Nepodařilo se připojit k FAPI. Zkontrolujte prosím své přihlašovací údaje."
+msgstr ""
+"Nepodařilo se připojit k FAPI. Zkontrolujte prosím své přihlašovací údaje."
+
+#: locker.php:743
+msgid ""
+"Připojení na FAPI není funkční. Nejprve je potřeba nastavit spojení na FAPI."
+msgstr ""
+"Připojení na FAPI není funkční. Nejprve je potřeba nastavit spojení na FAPI."
+
+#: locker.php:745
+msgid "Správné přihlašovací údaje zadejte v "
+msgstr "Správné přihlašovací údaje zadejte v "
+
+#: locker.php:745
+msgid "nastavení FAPI lockeru"
+msgstr "nastavení FAPI lockeru"
+
+#: locker.php:760
+msgid "Stav lockeru"
+msgstr "Stav lockeru"
+
+#: locker.php:762
+msgid "Neaktivní"
+msgstr "Neaktivní"
+
+#: locker.php:763
+msgid "Aktivní"
+msgstr "Aktivní"
+
+#: locker.php:772
+msgid "Text v případě nezakoupení článku"
+msgstr "Text v případě nezakoupení článku"
+
+#: locker.php:777
+msgid "Text tlačítka pro zobrazení Prodejního formuláře"
+msgstr "Text tlačítka pro zobrazení Prodejního formuláře"
+
+#: locker.php:783
+msgid "Název položky na faktuře"
+msgstr "Název položky na faktuře"
+
+#: locker.php:840
+msgid "Přidat další položku"
+msgstr "Přidat další položku"
+
+#: locker.php:844
+msgid "Zvolte Prodejní formulář FAPI"
+msgstr "Zvolte Prodejní formulář FAPI"
+
+#: locker.php:860
+msgid "Povolené e-maily"
+msgstr "Povolené e-maily"
+
+#: locker.php:864
+msgid "Při zadávání více emailů je oddělujte čárkou."
+msgstr "Při zadávání více emailů je oddělujte čárkou."
+
+#: locker.php:869
+msgid "Globální nastavení barvy a ohraničení prodejního formuláře"
+msgstr "Globální nastavení barvy a ohraničení prodejního formuláře"
+
+#: locker.php:919
+msgid "Článek není možné odemknout, jelikož autor odstranil FAPI formulář"
+msgstr "Článek není možné odemknout, jelikož autor odstranil FAPI formulář"
+
+#: locker.php:942
+msgid "Akci můžete provést na"
+msgstr "Akci můžete provést na"
+
+#: locker.php:942
+msgid "stránce s obsahem"
+msgstr "stránce s obsahem"
+
+#: locker.php:951
+msgid "Zadejte e-mail"
+msgstr "Zadejte e-mail"
+
+#: locker.php:956
+msgid "Mám koupeno, chci odemknout obsah"
+msgstr "Mám koupeno, chci odemknout obsah"
+
+#. Plugin URI of the plugin/theme
+msgid "https://fapi.cz/fapi-locker"
+msgstr "https://fapi.cz/fapi-locker"
+
+#. Description of the plugin/theme
+msgid ""
+"Zamykání článků a stránek s ověřováním uhrazené platby přes FAPI s možností "
+"přímého nákupu."
+msgstr ""
+"Zamykání článků a stránek s ověřováním uhrazené platby přes FAPI s možností "
+"přímého nákupu."
+
+#. Author of the plugin/theme
+msgid "FAPI Business, s.r.o."
+msgstr "FAPI Business, s.r.o."
+
+#. Author URI of the plugin/theme
+msgid "https://www.fapi.cz"
+msgstr "https://www.fapi.cz"
