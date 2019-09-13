@@ -1,0 +1,72 @@
+#lockerMeta label{
+	width: 100%;
+	margin: 10px 0px;
+	font-weight: bold;
+	clear: both;
+	display: block;
+}
+#lockerMeta textarea{
+    width: 60%;
+    height: 100px;
+}
+#activeLocker{
+    display: none;
+}
+.removeInvoice{
+	text-decoration: none;
+	color: #ff0000;
+	font-weight: bold;
+}
+#addInvoice{
+	margin-top: 8px;
+	float: left;
+}
+
+
+
+#lockerMeta input[type="checkbox"]
+{
+	visibility: hidden;
+	position: absolute;
+}
+
+#lockerMeta input[type="checkbox"] + label
+{
+	cursor: pointer;
+	text-indent: -9999px;
+	width: 50px;
+	height: 26px;
+	background: grey;
+	display: block;
+	border-radius: 100px;
+	position: relative;
+}
+
+#lockerMeta input[type="checkbox"] + label:after
+{
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 22px;
+	height: 22px;
+	background: #fff;
+	border-radius: 90px;
+	transition: 0.3s;
+}
+
+#lockerMeta input[type="checkbox"]:checked + label
+{
+	background: #1e8cbe;
+}
+
+#lockerMeta input[type="checkbox"]:checked + label:after
+{
+	left: calc(100% - 2px);
+	transform: translateX(-100%);
+}
+
+#lockerMeta input[type="checkbox"] + label:active:after
+{
+	width: 35px;
+}

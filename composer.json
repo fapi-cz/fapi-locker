@@ -1,0 +1,40 @@
+{
+    "require": {
+        "php": "^7.0",
+        "fapi-cz/fapi-client": "^0.1.4"
+    },
+    "scripts": {
+        "post-update-cmd": [
+            "echo [WARNING] Delete all .git dirs",
+            "rm -rf vendor/**/**/.git",
+            "echo [WARNING] Delete all tests dirs",
+            "rm -rf vendor/**/**/tests",
+            "rm -rf vendor/**/**/Tests",
+            "echo [WARNING] Delete all examples dirs",
+            "rm -rf vendor/**/**/examples",
+            "echo [WARNING] Delete all md files",
+            "find vendor/ -name '*.md' -type f -delete",
+            "echo [WARNING] Delete all LICENSE files",
+            "find vendor/ -name 'LICENSE' -type f -delete",
+            "find vendor/ -name 'LICENSE.*' -type f -delete",
+            "echo [WARNING] Delete all docs dirs",
+            "rm -rf vendor/**/**/docs"
+        ],
+        "post-install-cmd": [
+            "echo [WARNING] Delete all .git dirs",
+            "rm -rf vendor/**/**/.git",
+            "echo [WARNING] Delete all tests dirs",
+            "rm -rf vendor/**/**/tests",
+            "rm -rf vendor/**/**/Tests",
+            "echo [WARNING] Delete all examples dirs",
+            "rm -rf vendor/**/**/examples",
+            "echo [WARNING] Delete all md files",
+            "find vendor/ -name '*.md' -type f -delete",
+            "echo [WARNING] Delete all LICENSE files",
+            "find vendor/ -name 'LICENSE' -type f -delete",
+            "find vendor/ -name 'LICENSE.*' -type f -delete",
+            "echo [WARNING] Delete all docs dirs",
+            "rm -rf vendor/**/**/docs"
+        ]
+    }
+}
