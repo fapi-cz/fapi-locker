@@ -932,7 +932,7 @@ class FAPI_Locker
                             $forms = $fapi_client->forms->findAll();
                             if (!empty($forms)) {
                                 foreach ($forms as $form) {
-                                    echo '<option value="' . $form['id'] . '" ' . ($values['lockerForm'][0] == $form['id'] ? 'selected' : '') . '>' . $form['name'] . '</option>';
+                                    echo '<option value="' . $form['id'] . '" ' . ((string)$values['FAPILockerForm'] == (string)$form['id'] ? 'selected' : '') . '>' . $form['name'] . '</option>';
                                 }
                             } ?>
                     </select>
