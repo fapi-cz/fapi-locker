@@ -836,7 +836,7 @@ class FAPI_Locker
             <label for="active"
                    style="font-size: 14px;"><?php echo __('Zamknout stránku', static::LANG_DOMAIN); ?></label>
             <input type="checkbox" id="active" name="active"
-                   value="1" <?php echo $values[static::META_ACTIVE] === '1' ? 'checked' : ''; ?>>
+                   value="1" <?php echo (isset($values[static::META_ACTIVE]) && $values[static::META_ACTIVE] === '1') ? 'checked' : ''; ?>>
             <label for="active">Toggle</label>
 
             <div class="clear"></div>
@@ -909,7 +909,7 @@ class FAPI_Locker
                 <label for="showOrderForm"
                        style="font-size: 14px;"><?php echo __('Zobrazit tlačítko pro zakoupení přístupu', static::LANG_DOMAIN); ?></label>
                 <input type="checkbox" id="showOrderForm" name="showOrderForm"
-                       value="1" <?php echo $values[static::META_SHOW_BUTTON] === '0' ? '' : 'checked'; ?>>
+                       value="1" <?php echo (isset($values[static::META_SHOW_BUTTON]) && $values[static::META_SHOW_BUTTON] === '0') ? '' : 'checked'; ?>>
                 <label for="showOrderForm">Toggle</label>
 
 
