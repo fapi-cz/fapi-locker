@@ -532,6 +532,38 @@ class FAPI_Locker
             return true;
         }
 
+        $items = $fapi->getItemTemplates()->findAll(['name' => $invoice[0]]);
+        $itemCode = isset($items[0]['code']) ? $items[0]['code'] : null;
+
+        if ($itemCode !== null) {
+            foreach ($invoices as $inv) {
+                if ($inv['paid']) {
+                    foreach ($inv['items'] as $item) {
+                        if ($itemCode === $item['code']) {
+                            foreach ($invoices as $i) {
+                                foreach ($i['items'] as $it) {
+                                    if ($it['code'] != $item['code']) {
+                                        continue;
+                                    }
+
+                                    if (isset($i['parent']) && $i['parent'] == $inv['id'] && $i['type'] == 'credit_note' && $it['code'] == $item['code']) {
+                                        $allowed[$item['name']] = false;
+                                    } elseif ($i['paid']) {
+                                        $allowed[$item['code']] = true;
+                                    }
+                                }
+                            }
+                            $resolvedItems[] = $item['code'];
+                        }
+                    }
+                }
+            }
+
+            if (in_array(true, $allowed)) {
+                return true;
+            }
+        }
+
         //Faktury existuji, v zadne neni pozadovany text
         static::set_error_message('Pro e-mailovou adresu "' . htmlspecialchars($email) . '" není tento tento obsah přístupný.', 5);
         return false;
@@ -1037,11 +1069,11 @@ class FAPI_Locker
                 // Generuj odemykaci FORM podle emailu.
                 $lockerContent .= '
 <div id="lockerCheckMail">
-    <form action="" method="post">
-        <label for="lockerMail">' . __('Zadejte e-mailovou adresu, kterou jste použili v objednávce', static::LANG_DOMAIN) . '. </label>
-        <input type="text" name="lockerMail" id="lockerMail" ' . (isset($emailToValidate) ? 'value="' . esc_attr($emailToValidate) . '"' : '') . ' />
-        <input type="submit" value="Odemknout" ' . $lockerButtonStyleHtml . ' />
-    </form>
+<form action="" method="post">
+    <label for="lockerMail">' . __('Zadejte e-mailovou adresu, kterou jste použili v objednávce', static::LANG_DOMAIN) . '. </label>
+    <input type="text" name="lockerMail" id="lockerMail" ' . (isset($emailToValidate) ? 'value="' . esc_attr($emailToValidate) . '"' : '') . ' />
+    <input type="submit" value="Odemknout" ' . $lockerButtonStyleHtml . ' />
+</form>
 </div>';
                 $lockerContent .= '<br />';
                 $lockerContent .= '<div id="lockerForm">' . $fapiForm['html_code'] . '</div>';
