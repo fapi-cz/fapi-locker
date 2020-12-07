@@ -508,20 +508,20 @@ class FAPI_Locker
 
                         foreach ($invoices as $i) {
                             foreach ($i['items'] as $it) {
-                                if ($it['name'] != $item['name']) {
+                                if ($it['code'] != $item['code']) {
                                     continue;
                                 }
 
-                                if (isset($i['parent']) && $i['parent'] == $inv['id'] && $i['type'] == 'credit_note' && $it['name'] == $item['name']) {
+                                if (isset($i['parent']) && $i['parent'] == $inv['id'] && $i['type'] == 'credit_note' && $it['code'] == $item['code']) {
 
-                                    $allowed[$item['name']] = false;
+                                    $allowed[$item['code']] = false;
                                 } elseif ($i['paid']) {
 
-                                    $allowed[$item['name']] = true;
+                                    $allowed[$item['code']] = true;
                                 }
                             }
                         }
-                        $resolvedItems[] = $item['name'];
+                        $resolvedItems[] = $item['code'];
                     }
                 }
             }
